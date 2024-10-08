@@ -401,7 +401,7 @@ class PersistDict(dict):
             self.shared.cache_timestamps[self.lockkey] = self.database_path.stat().st_mtime
 
     def clear(self) -> None:
-        raise NotImplementedError("Can't clear like a dict")
+        raise NotImplementedError("PersistDict cannot be cleared like a dict. Use self.cache_clear() to reset the cache, or reset the database with self.__delitems__(list(self.keys()))")
 
     def __len__(self) -> int:
         if self.verbose:
