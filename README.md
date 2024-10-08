@@ -9,9 +9,9 @@ This makes it very easy to add persistent cache to anything.
 
 ## Features:
 - **threadsafe**: if several threads try to access the same db it won't be a
-  problem. Even if multiple other threads use also another db. And if
-  several python scripts run at the same time and try to access the same
-  db, sqlite3 should make them wait appropriately.
+  problem. Even if multiple other threads use also another db. Thanks to
+  a singleton class. And if several python scripts run at the same time
+  and try to access the same db, sqlite3 should make them wait appropriately.
 - **atime and ctime**: each entry includes a creation time and a last access time.
 - **expiration**: won't grow too large because old keys are automatically removed.
 - **cached**: an actual python dict is used to cache the access to the db.
