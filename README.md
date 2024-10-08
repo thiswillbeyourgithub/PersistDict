@@ -4,7 +4,7 @@ Just a DIY version [sqldict](https://github.com/piskvorky/sqlitedict): looks lik
 
 ## Why?
 
-I ran into issue with langchain's caches and after months of waiting I decided to fix it myself. And instead of trusting sqldict's implementation with langchain's concurrency I made my own.
+I ran into issue with langchain's caches when developping [wdoc](https://github.com/thiswillbeyourgithub/WDoc) (my RAG lib, optimized for my use) and after months of waiting I decided to fix it myself. And instead of trusting sqldict's implementation with langchain's concurrency I made my own.
 This makes it very easy to add persistent cache to anything.
 
 ## Features:
