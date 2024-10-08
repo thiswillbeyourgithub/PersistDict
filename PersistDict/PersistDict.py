@@ -44,6 +44,9 @@ class PersistDict(dict):
         """
         Initialize a PersistDict instance.
 
+        The PersistDict class provides a persistent dictionary-like interface, storing data in an SQLite database.
+        It supports optional encryption, compression, and automatic expiration of entries.
+
         Args:
             database_path (Union[str, PosixPath]): Path to the SQLite database file.
             expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
@@ -55,9 +58,6 @@ class PersistDict(dict):
             password (Optional[str], default=None): Password for database encryption. If None, the database is not encrypted.
             password_inc (int, default=100_000): Number of iterations for password hashing.
             verbose (bool, default=False): If True, enables verbose logging.
-
-        The PersistDict class provides a persistent dictionary-like interface, storing data in an SQLite database.
-        It supports optional encryption, compression, and automatic expiration of entries.
         """
         if password:
             assert len(password.strip()) > 7, "password has to be at least 7 characters long excluding whitespaces"
