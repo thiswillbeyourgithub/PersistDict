@@ -98,7 +98,10 @@ class PersistDict(dict):
             )
         else:
             self._log("opening encrypted connection")
-            from pysqlcipher3 import dbapi2 as sqlite3_encrypted
+            try:
+                from pysqlcipher3 import dbapi2 as sqlite3_encrypted
+            except ImportError as e:
+                raise Exception(f"Error when importing pysqlcipher3: '{e}'") from e
             conn = sqlite3_encrypted.connect(
                 str(self.database_path),
                 check_same_thread=self.check_same_thread,
