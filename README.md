@@ -44,10 +44,12 @@ place encryption instead.
 
 
 ## Usage:
-* `git clone https://github.com/thiswillbeyourgithub/PersistDict`
-* `cd PersistDict`
-* `pip install -e .`
-* To test that the code woks: `cd PersistDict ; python PersistDict.py`
+* Download from pypi with `pip install PersistDict`
+* Or from git:
+    * `git clone https://github.com/thiswillbeyourgithub/PersistDict`
+    * `cd PersistDict`
+    * `pip install -e .`
+    * To test that the code works fine: `cd PersistDict ; python PersistDict.py`
 
 ``` python
 from PersistDict import PersistDict
