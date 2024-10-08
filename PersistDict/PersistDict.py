@@ -24,8 +24,8 @@ except ImportError:
 @typechecker
 class PersistDict(dict):
     __VERSION__: str = "0.0.1"
-    already_called: bool = False
-    missing_value: Any = MISSING
+    __already_called__: bool = False
+    __missing_value__: Any = MISSING
 
     def __init__(
         self,
@@ -247,7 +247,7 @@ class PersistDict(dict):
         Hence, we remove this attribute after first use
         """
         self._log(".__call__")
-        assert not self.already_called, "The __call__ method of PersistDict can only be called once. Just like a regular dict."
+        assert not self.__already_called__, "The __call__ method of PersistDict can only be called once. Just like a regular dict."
 
         if len(args) == 1 and isinstance(args[0], (dict, list)):
             items = args[0].items() if isinstance(args[0], dict) else args[0]
@@ -257,7 +257,7 @@ class PersistDict(dict):
         for key, value in items:
             self[key] = value
 
-        self.already_called = True
+        self.__already_called__ = True
 
         return self
 
@@ -311,7 +311,7 @@ class PersistDict(dict):
                         output.append(results[t])
                         self.__cache__[t] = results[t]
                     else:
-                        output.append(self.missing_value)
+                        output.append(self.__missing_value__)
             self.__tick_cache__()
         return output
 
@@ -320,14 +320,14 @@ class PersistDict(dict):
 
     def __setitems__(self, key_value_pairs: Sequence[Sequence]) -> None:
         "actual code to set the data in the db then the cache"
-        if not self.already_called:
-            self.already_called = True
+        if not self.__already_called__:
+            self.__already_called__ = True
         assert all(len(pair) == 2 for pair in key_value_pairs)
         keys = [kv[0] for kv in key_value_pairs]
         vals = [kv[1] for kv in key_value_pairs]
         self._log(f"setting item at keys {keys}")
-        if any(v is self.missing_value for v in vals):
-            raise Exception(f"PersistDict can't store self.missing_value '{self.missing_value}' objects as it's used to denote missing objects")
+        if any(v is self.__missing_value__ for v in vals):
+            raise Exception(f"PersistDict can't store self.__missing_value__ '{self.__missing_value__}' objects as it's used to denote missing objects")
 
         kvp = {k: self.value_serializer(v) for k, v in key_value_pairs}
         conn = self.__connect__()
@@ -431,11 +431,11 @@ class PersistDict(dict):
         try:
             with self.lock:
                 cursor.execute('SELECT key FROM storage ORDER BY ctime')
-                results = [row[0] if row else self.missing_value for row in cursor.fetchall()]
+                results = [row[0] if row else self.__missing_value__ for row in cursor.fetchall()]
         finally:
             conn.close()
         for r in results:
-            assert r is not self.missing_value
+            assert r is not self.__missing_value__
             yield r
 
     def values(self) -> Generator[Any, None, None]:
@@ -453,7 +453,7 @@ class PersistDict(dict):
         finally:
             conn.close()
         for r in results:
-            assert r is not self.missing_value
+            assert r is not self.__missing_value__
             return self.value_unserializer(r)
 
     def items(self) -> Generator[Tuple[str, Any], None, None]:
@@ -463,11 +463,11 @@ class PersistDict(dict):
         try:
             with self.lock:
                 cursor.execute('SELECT key, value FROM storage ORDER BY ctime')
-                results = [row if row else self.missing_value for row in cursor.fetchall()]
+                results = [row if row else self.__missing_value__ for row in cursor.fetchall()]
         finally:
             conn.close()
         for r in results:
-            assert r is not self.missing_value
+            assert r is not self.__missing_value__
             assert len(r) == 2
             yield r[0], self.value_unserializer(r[1])
 

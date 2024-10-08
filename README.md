@@ -28,7 +28,7 @@ place encryption instead.
 
 ## Differences with python dict:
 - keys have to be str, that's what the sqlite db table is expecting.
-- an object stored at self.missing_value is used to designate a MISSING value,
+- an object stored at self.__missing_value__ is used to designate a MISSING value,
   so you can't pickle this object. By default it's dataclasses.MISSING.
 - .clear() will throw a NotImplementedError to avoid erasing the db. If you
   just want to clear the cache use self.clear_cache()
@@ -37,7 +37,7 @@ place encryption instead.
     * .__setitems__
     * .__delitems__
     - Note that calling __getitems__ with some keys missing will not return
-      a KeyError but a self.missing_value for those keys, which by default is
+      a KeyError but a self.__missing_value__ for those keys, which by default is
       dataclasses.MISSING.
 
 
