@@ -240,6 +240,25 @@ class PersistDict(dict):
                     self.__tick_cache__()
 
     def __integrity_check__(self) -> None:
+        """
+        Perform an integrity check on the database.
+
+        This method checks the integrity of the SQLite database and verifies the consistency
+        of creation times (ctime) and access times (atime) for all entries.
+
+        The method performs the following steps:
+        1. Runs SQLite's built-in PRAGMA integrity_check.
+        2. Verifies that all creation times are less than or equal to their corresponding access times.
+        3. Calls the __version_check__ method to ensure version compatibility.
+
+        Raises:
+            Exception: If the PRAGMA integrity_check fails or if any inconsistencies are found
+                       in the creation and access times.
+            sqlite3.Error: If there's an SQLite-specific error during the check.
+
+        Note:
+            This method is called internally and should not be called directly by users.
+        """
         self._log("checking integrity of db")
         self.__check_cache__()
         conn = self.__connect__()
