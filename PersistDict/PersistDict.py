@@ -288,6 +288,18 @@ class PersistDict(dict):
         self.__version_check__()
 
     def __version_check__(self) -> None:
+        """
+        Check the version of the database against the current PersistDict version.
+
+        This method retrieves the version information stored in the database's metadata
+        and compares it with the current version of the PersistDict class. If there's
+        a version mismatch, it raises a NotImplementedError, as migrations between
+        different versions are not yet supported.
+
+        Raises:
+            AssertionError: If the 'version' key is missing from the metadata.
+            NotImplementedError: If the database version doesn't match the current PersistDict version.
+        """
         self._log("checking version")
         self.__check_cache__()
         conn = self.__connect__()
