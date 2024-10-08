@@ -73,7 +73,6 @@ class PersistDict(dict):
         with self.lock:
             with self.shared.meta_db_lock:
                 self.__cache__ = self.shared.db_caches[self.lockkey]
-                self.__tick_cache__()
 
 
         # create db if not exist
@@ -83,6 +82,8 @@ class PersistDict(dict):
         self.__integrity_check__()
         self.__expire__()
         self.__integrity_check__()
+
+        self.__tick_cache__()
 
     def __connect__(self) -> Union[sqlite3.Connection, Any]:
         "open connection to the db"
@@ -277,15 +278,19 @@ class PersistDict(dict):
         self._log("clearing cache")
         with self.lock:
             self.__cache__.clear()
+            self.__tick_cache__()
 
     def __check_cache__(self) -> None:
         """check if the db has been modified recently and not by us, then we
         need to drop the cache. It can happen if multiple python scripts are
         running at the same time."""
+        if not hasattr(self.__cache__, "last_modtime"):
+            self.__cache__.last_modtime = self.database_path.stat().st_mtime
+            return
         if self.__cache__.last_modtime < self.database_path.stat().st_mtime:
             self._log("Cache was not up to date so clearing it.")
             self.clear_cache()
-            self.__tick_cache__()
+
         # also check that the is is still as expected
         with self.shared.meta_db_lock:
             assert id(self.__cache__) == id(self.shared.db_caches[self.lockkey])
@@ -326,7 +331,6 @@ class PersistDict(dict):
         diff = len(keysbefore) - len(keysafter)
         assert diff >= 0, diff
         self._log(f"expirating cache removed {diff} keys, remaining: {keysafter}")
-
 
         self.__check_cache__()
 
