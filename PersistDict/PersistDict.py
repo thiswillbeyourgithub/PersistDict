@@ -130,6 +130,19 @@ class PersistDict(dict):
             return conn
 
     def __init_table__(self) -> None:
+        """
+        Initialize the database tables.
+
+        This method creates the necessary tables in the SQLite database if they don't exist.
+        It also sets up compression if enabled and performs a vacuum operation.
+
+        The method creates two tables:
+        1. 'storage': Stores the key-value pairs along with creation and access timestamps.
+        2. 'metadata': Stores metadata information, including the version of PersistDict.
+
+        Raises:
+            sqlite3.DatabaseError: If there's an issue with the database file or encryption.
+        """
         self._log(".__init_table__")
         conn = self.__connect__()
         cursor = conn.cursor()
