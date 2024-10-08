@@ -259,8 +259,6 @@ class PersistDict(dict):
         for key, value in items:
             self[key] = value
 
-        self.__already_called__ = True
-
         return self
 
     def __getitem__(self, key: str) -> Any:
