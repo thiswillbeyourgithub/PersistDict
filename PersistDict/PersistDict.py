@@ -41,6 +41,24 @@ class PersistDict(dict):
         password_inc: int = 100_000,
         verbose: bool = False,
         ) -> None:
+        """
+        Initialize a PersistDict instance.
+
+        Args:
+            database_path (Union[str, PosixPath]): Path to the SQLite database file.
+            expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
+            check_same_thread (bool, default=False): If False, allows SQLite connections from multiple threads.
+            connection_timeout (int, default=30): Timeout in seconds for database connections.
+            compression (bool, default=True): Whether to enable database compression.
+            value_serializer (Callable, default=pickle.dumps): Function to serialize values before storing.
+            value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval.
+            password (Optional[str], default=None): Password for database encryption. If None, the database is not encrypted.
+            password_inc (int, default=100_000): Number of iterations for password hashing.
+            verbose (bool, default=False): If True, enables verbose logging.
+
+        The PersistDict class provides a persistent dictionary-like interface, storing data in an SQLite database.
+        It supports optional encryption, compression, and automatic expiration of entries.
+        """
         if password:
             assert len(password.strip()) > 7, "password has to be at least 7 characters long excluding whitespaces"
             salt = "Z05gFsdff9m3pQhOfSB2sE0Y0waMpYw0RTaxNKH3He965ct/7xHBCQmBr+HgKu7bC8uhNkN4kk9NuHh7FU7sHQ"
