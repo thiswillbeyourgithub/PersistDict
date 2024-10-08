@@ -346,10 +346,25 @@ class PersistDict(dict):
         return self.__getitems__([key])[0]
 
     def __getitems__(self, keys: Sequence[str]) -> Sequence[Any]:
-        "actual lookup through cache or db"
-        self._log(f"getting items for keys {keys}")
-            # check the cache is still as expected
+        """
+        Retrieve multiple items from the database or cache.
 
+        This method performs a batch lookup of multiple keys, either from the cache
+        or from the database if not found in the cache. It updates the access time
+        for each key in the database and refreshes the cache with any newly retrieved values.
+
+        Args:
+            keys (Sequence[str]): A sequence of keys to retrieve.
+
+        Returns:
+            Sequence[Any]: A sequence of values corresponding to the input keys.
+                           If a key is not found, the corresponding value will be self.__missing_value__.
+
+        Note:
+            This method is used internally by __getitem__ for efficient batch retrieval.
+        """
+        self._log(f"getting items for keys {keys}")
+        # check the cache is still as expected
         self.__check_cache__()
 
         with self.lock:
