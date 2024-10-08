@@ -49,12 +49,15 @@ place encryption instead.
 * To test that the code woks: `cd PersistDict ; python PersistDict.py`
 
 ``` python
+from PersistDict import PersistDict
+
 # create the object
 d = PersistDict(
     database_path=a_path,
-    compression=True,
-    password="J4mesB0nd",
-    verbose=True,
+    # compression=True,
+    # password="J4mesB0nd",
+    # verbose=True,
+    # expiration_days=30,
 )
 # then treat it like a dict:
 d["a"] = 1
