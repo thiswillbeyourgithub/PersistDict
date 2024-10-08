@@ -6,6 +6,7 @@ Just a DIY version [sqldict](https://github.com/piskvorky/sqlitedict): looks lik
 
 I ran into issue with langchain's caches when developping [wdoc](https://github.com/thiswillbeyourgithub/WDoc) (my RAG lib, optimized for my use) and after months of waiting I decided to fix it myself. And instead of trusting sqldict's implementation with langchain's concurrency I made my own.
 This makes it very easy to add persistent cache to anything.
+Also it was easy to do thanks to my [BrownieCutter](https://pypi.org/project/BrownieCutter/).
 
 ## Features:
 - **threadsafe**: if several threads try to access the same db it won't be a
