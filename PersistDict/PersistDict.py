@@ -151,6 +151,95 @@ class PersistDict(dict):
         finally:
             conn.close()
 
+    def __expire__(self) -> None:
+        """remove elements of db that have not been used since a certain
+        timestamp"""
+        if not self.expiration_days:
+            return
+        self._log("expirating cache")
+        assert self.expiration_days > 0, "expiration_days has to be a positive int or 0 to disable"
+        expiration_date = datetime.datetime.now() - datetime.timedelta(days=self.expiration_days)
+
+        keysbefore = list(self.keys())
+
+        conn = self.__connect__()
+        cursor = conn.cursor()
+        try:
+            with self.lock:
+                cursor.execute("BEGIN")
+                cursor.execute("DELETE FROM storage WHERE atime < ?", (expiration_date,))
+                conn.commit()
+
+                cursor.execute("VACUUM")
+                conn.commit()
+        finally:
+            conn.close()
+
+        keysafter = list(self.keys())
+        diff = len(keysbefore) - len(keysafter)
+        assert diff >= 0, diff
+        self._log(f"expirating cache removed {diff} keys, remaining: {keysafter}")
+
+        self.__check_cache__()
+
+        with self.lock:
+            for kb in keysbefore:
+                if kb not in keysafter and kb in self.__cache__:
+                    del self.__cache__[kb]
+                    self.__tick_cache__()
+
+    def __integrity_check__(self) -> None:
+        self._log("checking integrity of db")
+        self.__check_cache__()
+        conn = self.__connect__()
+        cursor = conn.cursor()
+        try:
+            with self.lock:
+                cursor.execute("BEGIN")
+                cursor.execute("PRAGMA integrity_check")
+                result = cursor.fetchall()
+
+                if not (len(result) == 1 and result[0][0] == 'ok'):
+                    raise Exception("PRAGMA integrity_check failed:\n" + "\n".join([row[0] for row in result]))
+
+                cursor.execute('SELECT ctime, atime FROM storage ORDER BY ctime')
+                results = cursor.fetchall()
+                if result:
+                    cnt = 0
+                    for ctime, atime in results:
+                        cnt += 1
+                        assert ctime <= atime, f"Found a creation time < to an access time in the {cnt} position"
+
+        except sqlite3.Error as e:
+            raise Exception(f"integrity_check failed: SQLite error: '{e}'")
+        finally:
+            conn.close()
+
+        self.__version_check__()
+
+    def __version_check__(self) -> None:
+        self._log("checking version")
+        self.__check_cache__()
+        conn = self.__connect__()
+        cursor = conn.cursor()
+        try:
+            with self.lock:
+                cursor.execute('SELECT key, value FROM metadata')
+                metadatas = cursor.fetchall()
+                metadatas: dict = {m[0]: m[1] for m in metadatas}
+        finally:
+            conn.close()
+        assert "version" in metadatas, f"Missing version key in metadata:\n{metadatas}"
+        if metadatas["version"] != self.__VERSION__:
+            raise NotImplementedError(
+                f"You are using PersistDict version {self.__VERSION__} "
+                "but the db you're trying to load is in version "
+                f"{metadatas['version']}. Crashing as migrations are not yet supported.")
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            debug("PersistDict:" + message)
+
     def __call__(self, *args, **kwargs):
         """ only available at instantiation time. For example :
         d = dict(a=1)  # works
@@ -313,95 +402,6 @@ class PersistDict(dict):
 
     def clear(self) -> None:
         raise NotImplementedError("Can't clear like a dict")
-
-    def __expire__(self) -> None:
-        """remove elements of db that have not been used since a certain
-        timestamp"""
-        if not self.expiration_days:
-            return
-        self._log("expirating cache")
-        assert self.expiration_days > 0, "expiration_days has to be a positive int or 0 to disable"
-        expiration_date = datetime.datetime.now() - datetime.timedelta(days=self.expiration_days)
-
-        keysbefore = list(self.keys())
-
-        conn = self.__connect__()
-        cursor = conn.cursor()
-        try:
-            with self.lock:
-                cursor.execute("BEGIN")
-                cursor.execute("DELETE FROM storage WHERE atime < ?", (expiration_date,))
-                conn.commit()
-
-                cursor.execute("VACUUM")
-                conn.commit()
-        finally:
-            conn.close()
-
-        keysafter = list(self.keys())
-        diff = len(keysbefore) - len(keysafter)
-        assert diff >= 0, diff
-        self._log(f"expirating cache removed {diff} keys, remaining: {keysafter}")
-
-        self.__check_cache__()
-
-        with self.lock:
-            for kb in keysbefore:
-                if kb not in keysafter and kb in self.__cache__:
-                    del self.__cache__[kb]
-                    self.__tick_cache__()
-
-    def __integrity_check__(self) -> None:
-        self._log("checking integrity of db")
-        self.__check_cache__()
-        conn = self.__connect__()
-        cursor = conn.cursor()
-        try:
-            with self.lock:
-                cursor.execute("BEGIN")
-                cursor.execute("PRAGMA integrity_check")
-                result = cursor.fetchall()
-
-                if not (len(result) == 1 and result[0][0] == 'ok'):
-                    raise Exception("PRAGMA integrity_check failed:\n" + "\n".join([row[0] for row in result]))
-
-                cursor.execute('SELECT ctime, atime FROM storage ORDER BY ctime')
-                results = cursor.fetchall()
-                if result:
-                    cnt = 0
-                    for ctime, atime in results:
-                        cnt += 1
-                        assert ctime <= atime, f"Found a creation time < to an access time in the {cnt} position"
-
-        except sqlite3.Error as e:
-            raise Exception(f"integrity_check failed: SQLite error: '{e}'")
-        finally:
-            conn.close()
-
-        self.__version_check__()
-
-    def __version_check__(self) -> None:
-        self._log("checking version")
-        self.__check_cache__()
-        conn = self.__connect__()
-        cursor = conn.cursor()
-        try:
-            with self.lock:
-                cursor.execute('SELECT key, value FROM metadata')
-                metadatas = cursor.fetchall()
-                metadatas: dict = {m[0]: m[1] for m in metadatas}
-        finally:
-            conn.close()
-        assert "version" in metadatas, f"Missing version key in metadata:\n{metadatas}"
-        if metadatas["version"] != self.__VERSION__:
-            raise NotImplementedError(
-                f"You are using PersistDict version {self.__VERSION__} "
-                "but the db you're trying to load is in version "
-                f"{metadatas['version']}. Crashing as migrations are not yet supported.")
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            debug("PersistDict:" + message)
 
     def __len__(self) -> int:
         if self.verbose:
