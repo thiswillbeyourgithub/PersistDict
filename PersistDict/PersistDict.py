@@ -110,7 +110,6 @@ class PersistDict(dict):
             conn.execute(f"PRAGMA key='{self.__pw__}'")
             return conn
 
-
     def __init_table__(self) -> None:
         self._log(".__init_table__")
         conn = self.__connect__()
@@ -419,16 +418,10 @@ class PersistDict(dict):
         return False
 
     def __repr__(self) -> str:
-        d = {}
-        for k, v in self.items():
-            d[k] = v
-        return d.__repr__()
+        return {k: v for k, v in self.items()}.__repr__()
 
     def __str__(self) -> str:
-        d = {}
-        for k, v in self.items():
-            d[k] = v
-        return d.__str__()
+        return {k: v for k, v in self.items()}.__str__()
 
     def keys(self) -> Generator[str, None, None]:
         "get the list of keys present in the db"
