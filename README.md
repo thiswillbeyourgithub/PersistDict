@@ -32,7 +32,8 @@ place encryption instead.
 - an object stored at self.__missing_value__ is used to designate a MISSING value,
   so you can't pickle this object. By default it's dataclasses.MISSING.
 - .clear() will throw a NotImplementedError to avoid erasing the db. If you
-  just want to clear the cache use self.clear_cache()
+  just want to clear the cache use self.clear_cache(). If you actually want to remove
+  all data you can do `self.__delitems__(list(self.keys()))`.
 - add 3 methods to 'slice' the dict with multiple key/values:
     * .__getitems__
     * .__setitems__
