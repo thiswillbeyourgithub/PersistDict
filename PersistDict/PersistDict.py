@@ -184,8 +184,27 @@ class PersistDict(dict):
             conn.close()
 
     def __expire__(self) -> None:
-        """remove elements of db that have not been used since a certain
-        timestamp"""
+        """
+        Remove elements from the database that have not been accessed within the expiration period.
+
+        This method checks the access time (atime) of each entry in the database and removes
+        those that are older than the specified expiration period. The expiration period is
+        determined by the `expiration_days` attribute set during initialization.
+
+        If `expiration_days` is 0 or None, this method does nothing and returns immediately.
+
+        The method performs the following steps:
+        1. Calculates the expiration date based on the current date and `expiration_days`.
+        2. Removes entries from the database with an access time older than the expiration date.
+        3. Performs a VACUUM operation to optimize the database after deletion.
+        4. Updates the in-memory cache to reflect the changes made to the database.
+
+        Raises:
+            AssertionError: If `expiration_days` is not a positive integer or 0.
+
+        Note:
+            This method is called internally and should not be called directly by users.
+        """
         if not self.expiration_days:
             return
         self._log("expirating cache")
