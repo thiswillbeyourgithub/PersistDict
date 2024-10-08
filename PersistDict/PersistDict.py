@@ -492,7 +492,13 @@ class PersistDict(dict):
             assert id(self.__cache__) == id(self.shared.db_caches[self.lockkey])
 
     def __tick_cache__(self) -> None:
-        "updates the last_modtime attribute of the cache"
+        """
+        Update the cache timestamp for the current database.
+
+        This method updates the cache timestamp in the shared cache_timestamps
+        dictionary, using the current modification time of the database file.
+        This helps in tracking when the database was last modified.
+        """
         with self.shared.meta_db_lock:
             self.shared.cache_timestamps[self.lockkey] = self.database_path.stat().st_mtime
 
