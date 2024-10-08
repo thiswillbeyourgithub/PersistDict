@@ -23,7 +23,7 @@ except ImportError:
 
 @typechecker
 class PersistDict(dict):
-    __VERSION__: str = "0.1"
+    __VERSION__: str = "0.0.1"
     already_called: bool = False
     missing_value: Any = MISSING
 

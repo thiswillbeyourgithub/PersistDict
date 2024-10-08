@@ -42,6 +42,9 @@ place encryption instead.
 
 
 ## Usage:
+* `git clone https://github.com/thiswillbeyourgithub/PersistDict`
+* `cd PersistDict`
+* `pip install -e .`
 ``` python
 # create the object
 d = PersistDict(
