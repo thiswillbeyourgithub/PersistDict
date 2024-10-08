@@ -7,6 +7,7 @@ from threading import Lock
 from dataclasses import MISSING
 import hashlib
 
+# only use those libs if present:
 try:
     from beartype import beartype as typechecker
 except ImportError:
@@ -241,10 +242,11 @@ class PersistDict(dict):
             debug("PersistDict:" + message)
 
     def __call__(self, *args, **kwargs):
-        """ only available at instantiation time. For example :
-        d = dict(a=1)  # works
-        d = d(a=2)  # fails, the instance of dict has no __call__ method
-        Hence, we remove this attribute after first use
+        """ only available at instantiation time, to make it more dict-like.
+        For example:
+            d = dict(a=1)  # works
+            d = d(a=2)  # fails, the instance of dict has no __call__ method
+        Hence, we forbid calling __call__ after the first use of __getitem__
         """
         self._log(".__call__")
         assert not self.__already_called__, "The __call__ method of PersistDict can only be called once. Just like a regular dict."

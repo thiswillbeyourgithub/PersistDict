@@ -35,9 +35,9 @@ place encryption instead.
   just want to clear the cache use self.clear_cache(). If you actually want to remove
   all data you can do `self.__delitems__(list(self.keys()))`.
 - add 3 methods to 'slice' the dict with multiple key/values:
-    * .__getitems__
-    * .__setitems__
-    * .__delitems__
+    * `.__getitems__`
+    * `.__setitems__`
+    * `.__delitems__`
     - Note that calling __getitems__ with some keys missing will not return
       a KeyError but a self.__missing_value__ for those keys, which by default is
       dataclasses.MISSING.
