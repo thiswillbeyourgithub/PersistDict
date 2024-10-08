@@ -136,6 +136,16 @@ class PersistDict(dict):
 
                 cursor.execute("VACUUM")
                 conn.commit()
+        except sqlite3.DatabaseError as e:
+            if "file is not a database" and not self.__pw__:
+                raise sqlite3.DatabaseError("File is not a database. Maybe you are trying to open an encrypted db without supplying the password?") from e
+            if "file is encrypted or is not a database":
+                if self.__pw__:
+                    raise sqlite3.DatabaseError("File is not a database or is not encrypted or you're using the wrong password.") from e
+                else:
+                    raise sqlite3.DatabaseError("File is not a database or is encrypted.") from e
+            else:
+                raise
         finally:
             conn.close()
 
