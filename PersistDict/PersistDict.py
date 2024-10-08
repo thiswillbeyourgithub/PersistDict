@@ -69,6 +69,8 @@ class PersistDict(dict):
             with self.shared.meta_db_lock:
                 self.shared.db_locks[self.lockkey] = Lock()
                 self.shared.db_caches[self.lockkey] = {}
+                self.shared.cache_timestamps[self.lockkey] = 0
+
         self.lock = self.shared.db_locks[self.lockkey]
         with self.lock:
             with self.shared.meta_db_lock:
@@ -278,16 +280,13 @@ class PersistDict(dict):
         self._log("clearing cache")
         with self.lock:
             self.__cache__.clear()
-            self.__tick_cache__()
+        self.__tick_cache__()
 
     def __check_cache__(self) -> None:
         """check if the db has been modified recently and not by us, then we
         need to drop the cache. It can happen if multiple python scripts are
         running at the same time."""
-        if not hasattr(self.__cache__, "last_modtime"):
-            self.__cache__.last_modtime = self.database_path.stat().st_mtime
-            return
-        if self.__cache__.last_modtime < self.database_path.stat().st_mtime:
+        if self.shared.cache_timestamps[self.lockkey] < self.database_path.stat().st_mtime:
             self._log("Cache was not up to date so clearing it.")
             self.clear_cache()
 
@@ -297,8 +296,8 @@ class PersistDict(dict):
 
     def __tick_cache__(self) -> None:
         "updates the last_modtime attribute of the cache"
-        self.__cache__.last_modtime = self.database_path.stat().st_mtime
-
+        with self.shared.meta_db_lock:
+            self.shared.cache_timestamps[self.lockkey] = self.database_path.stat().st_mtime
 
     def clear(self) -> None:
         raise NotImplementedError("Can't clear like a dict")
@@ -390,7 +389,7 @@ class PersistDict(dict):
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            self._log("PersistDict:" + message)
+            debug("PersistDict:" + message)
 
     def __len__(self) -> int:
         if self.verbose:
@@ -480,6 +479,7 @@ class SingletonHolder:
     initialized = False
     meta_db_lock = None
     db_locks = None
+    cache_timestamps = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -489,14 +489,16 @@ class SingletonHolder:
     def __init__(self) -> None:
         if self.initialized:
             return
-        self.meta_db_lock = Lock()
-        self.db_locks = {}
+        self.meta_db_lock: Lock = Lock()
+        self.db_locks: dict = {}
 
         # same idea for cache, if another instance points to the same path it could
         # modify a value and make the cache of another db wrong
         self.db_caches: dict = {}
 
-        self.initialized = True
+        self.cache_timestamps: dict = {}
+
+        self.initialized: bool = True
 
 if __name__ ==  "__main__":
     dbp = Path("test_db.sqlite")
