@@ -7,6 +7,7 @@ Just a DIY version [sqldict](https://github.com/piskvorky/sqlitedict): looks lik
 I ran into issue with langchain's caches when developping [wdoc](https://github.com/thiswillbeyourgithub/WDoc) (my RAG lib, optimized for my use) and after months of waiting I decided to fix it myself. And instead of trusting sqldict's implementation with langchain's concurrency I made my own.
 This makes it very easy to add persistent cache to anything.
 Also it was easy to do thanks to my [BrownieCutter](https://pypi.org/project/BrownieCutter/).
+**Note: after making this I stumbled upon [lmdb-dict](https://github.com/uchicago-dsi/lmdb-dict) which is very probably way better as it's done by pros. It's based on [LMDB](https://en.wikipedia.org/wiki/LMDB) which is a more suitable for what I was after when doing PersistDict than sqlite3.**
 
 ## Features:
 - **threadsafe**: if several threads try to access the same db it won't be a
