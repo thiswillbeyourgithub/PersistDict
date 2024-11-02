@@ -80,6 +80,7 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
 
         if self.database_path.is_dir():
+            self.database_path.mkdir(parents=True, exist_ok=True)
             self.database_path = self.database_path / "sqlite_dict.db"
 
         self.shared = SingletonHolder()
