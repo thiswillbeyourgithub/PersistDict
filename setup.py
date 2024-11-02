@@ -6,7 +6,7 @@ with open("README.md", "r") as readme:
 
 setup(
     name="PersistDict",
-    version="0.1.3",
+    version="0.1.4",
     description="Looks like a dict and acts like a dict but is persistent via an sqlite3 db, like sqldict",
     long_description=long_description,
     long_description_content_type="text/markdown",

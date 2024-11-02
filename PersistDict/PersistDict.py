@@ -24,7 +24,7 @@ except ImportError:
 
 @typechecker
 class PersistDict(dict):
-    __VERSION__: str = "0.1.3"
+    __VERSION__: str = "0.1.4"
     __already_called__: bool = False
     __missing_value__: Any = MISSING
 
