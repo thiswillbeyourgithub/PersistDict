@@ -148,7 +148,7 @@ class PersistDict(dict):
 
         for k in keysbefore:
             if self.metadata_db[k]["atime"] <= expiration_date:
-                del self[k]
+                del self.val_db[k], self.metadata_db[k]
 
         keysafter = list(self.val_db.keys())
         diff = len(keysbefore) - len(keysafter)
