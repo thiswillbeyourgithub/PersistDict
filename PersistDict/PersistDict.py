@@ -248,7 +248,7 @@ class PersistDict(dict):
         self._log(f"getting item at key {key}")
         # self.__integrity_check__()
         ks = self.key_serializer(key)
-        val = self.value_unserializer(self.val_db[ks])
+        val = self.val_db[ks]
         self.metadata_db[ks]["atime"] = datetime.datetime.now()
         return val
 
@@ -256,8 +256,7 @@ class PersistDict(dict):
         self._log(f"setting item at key {key}")
         # self.__integrity_check__()
         ks = self.key_serializer(key)
-        vs = self.value_serializer(value)
-        self.val_db[ks] = vs
+        self.val_db[ks] = value
         t = datetime.datetime.now()
         self.metadata_db[ks] = {"ctime": t, "atime": t}
 
@@ -300,9 +299,9 @@ class PersistDict(dict):
         self._log("getting values")
         for k in self.val_db.keys():
             self.metadata_db[k]["atime"] = datetime.datetime.now()
-            yield self.value_unserializer(self.val_db[k])
+            yield self.val_db[k]
 
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
         for k in self.val_db.keys():
-            yield self.key_unserializer(k), self.value_unserializer(self.val_db[k])
+            yield self.key_unserializer(k), self.val_db[k]
