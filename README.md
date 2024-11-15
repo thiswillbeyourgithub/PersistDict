@@ -17,9 +17,7 @@ I initially made an implementation that used sqlite (with support for encryption
 - **atime and ctime**: each entry includes a creation time and a last access time.
 - **expiration**: won't grow too large because old keys are automatically removed after a given amount of days.
 - **cached**: Uses a `LRUCache128` from [cachetools](https://github.com/tkem/cachetools/).
-- **compressed**: `lmdb-dict-full` already compresses data using zlib.
-- **customizable serializer for the value**: by default pickle is used, but could
-  be numpy.npz, dill.dumps etc.
+- **customizable serializer for keys and values**: This can enable encryption, compression etc...
 - **only one dependency needed** Only `lmdb-dict-full` is needed. If you have [beartype](https://github.com/beartype/beartype/) installed it will be used, same with [loguru](https://loguru.readthedocs.io/).
 
 
