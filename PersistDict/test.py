@@ -1,3 +1,4 @@
+import json
 import datetime
 import pickle
 import dill
@@ -81,11 +82,12 @@ def do_test_expiration_and_serialization():
     inst["test"] = "value"
     assert len(inst) == 1, inst
     assert inst["test"] == "value"
-    inst.metadata_db["test"]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
+    assert inst.key_serializer("test") in inst.metadata_db, inst.key_serializer("test")
+    inst.metadata_db[inst.key_serializer("test")]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
     assert len(inst) == 1, inst
     inst.__expire__()
     assert len(inst) == 1, inst
-    inst.metadata_db["test"]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
+    inst.metadata_db[inst.key_serializer("test")]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
     assert len(inst) == 1, inst
     inst.__expire__()
     assert len(inst) == 0, inst
@@ -106,14 +108,17 @@ def test_all():
         assert str(e) == "The __call__ method of PersistDict can only be called once. Just like a regular dict."
 
     for reset in ["clear", "delete", "clear"]:
-        for value_serializer, value_unserializer in [(pickle.dumps, pickle.loads), (dill.dumps, dill.loads)]:
-            do_one_test_scenario(
-                database_path=dbp,
-                verbose=True,
-                value_serializer=value_serializer,
-                value_unserializer=value_unserializer,
-                extra = {"reset": reset},
-            )
+        for key_serializer, key_unserializer in [(None, None), (json.dumps, json.loads)]:
+            for value_serializer, value_unserializer in [(pickle.dumps, pickle.loads), (dill.dumps, dill.loads)]:
+                do_one_test_scenario(
+                    database_path=dbp,
+                    verbose=True,
+                    key_serializer=key_serializer,
+                    key_unserializer=key_unserializer,
+                    value_serializer=value_serializer,
+                    value_unserializer=value_unserializer,
+                    extra = {"reset": reset},
+                )
 
     do_test_expiration_and_serialization()
 
