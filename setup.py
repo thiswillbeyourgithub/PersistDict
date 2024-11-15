@@ -6,8 +6,8 @@ with open("README.md", "r") as readme:
 
 setup(
     name="PersistDict",
-    version="0.1.4",
-    description="Looks like a dict and acts like a dict but is persistent via an sqlite3 db, like sqldict",
+    version="0.2.0",
+    description="Looks like a dict and acts like a dict but is persistent via an LMDB db",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/thiswillbeyourgithub/PersistDict",
@@ -19,8 +19,11 @@ setup(
         "Operating System :: OS Independent",
     ],
     license="GPLv3",
-    keywords=["dict", "persistence", "persistent", "storage", "sql", "sqlite", "db", "encryption", "encrypted", "compressed", "compression", "metadata", "browniecutter"],
+    keywords=["dict", "persistence", "persistent", "storage", "lmdb", "db", "compressed", "compression", "metadata", "browniecutter"],
     python_requires=">=3.9",
+    install_requires=[
+        "lmdb-dict-full >= 1.0.2",
+    ],
 
     entry_points={
         'console_scripts': [
