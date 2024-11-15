@@ -40,8 +40,8 @@ def do_one_test_scenario(extra, **kwargs):
     del d["b"]
     assert list(d.keys()) == ["a", "c"], d
     assert len(d) == 2, d
-    assert d.__repr__() == {"a": 1, "c": str}.__repr__()
-    assert d.__str__() == {"a": 1, "c": str}.__str__()
+    assert d.__repr__() == {"a": 1, "c": str}.__repr__(), d.__repr__()
+    assert d.__str__() == {"a": 1, "c": str}.__str__(), d.__str__()
 
     assert isinstance(d, dict)
 
@@ -82,12 +82,12 @@ def do_test_expiration_and_serialization():
     inst["test"] = "value"
     assert len(inst) == 1, inst
     assert inst["test"] == "value"
-    assert inst.key_serializer("test") in inst.metadata_db, inst.key_serializer("test")
-    inst.metadata_db[inst.key_serializer("test")]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
+    assert inst.key_serializer(inst.hash_and_crop("test")) in inst.metadata_db, inst.key_serializer("test")
+    inst.metadata_db[inst.key_serializer(inst.hash_and_crop("test"))]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
     assert len(inst) == 1, inst
     inst.__expire__()
     assert len(inst) == 1, inst
-    inst.metadata_db[inst.key_serializer("test")]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
+    inst.metadata_db[inst.key_serializer(inst.hash_and_crop("test"))]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
     assert len(inst) == 1, inst
     inst.__expire__()
     assert len(inst) == 0, inst

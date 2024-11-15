@@ -1,5 +1,6 @@
 import zlib
 import base64
+import hashlib
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 from lmdb_dict.mapping.abc import LmdbDict
@@ -28,6 +29,26 @@ def key_to_string(key):
 def string_to_key(pickled_str):
     return pickle.loads(zlib.decompress(base64.b64decode(pickled_str.encode('utf-8'))))
 
+def dummy_key_serializer(inp):
+    if isinstance(inp, str):
+        return inp.encode()
+    return inp
+
+def dummy_key_unserializer(inp):
+    if hasattr(inp, "decode"):
+        return inp.decode()
+    return inp
+
+def dummy_value_serializer(inp):
+    if isinstance(inp, str):
+        return inp.encode()
+    return inp
+
+def dummy_value_unserializer(inp):
+    if hasattr(inp, "decode"):
+        return inp.decode()
+    return inp
+
 @typechecker
 class PersistDict(dict):
     __VERSION__: str = "0.2.0"
@@ -38,6 +59,7 @@ class PersistDict(dict):
         expiration_days: Optional[int] = 0,
         key_serializer: Optional[Callable] = key_to_string,
         key_unserializer: Optional[Callable] = string_to_key,
+        key_size_limit: int = 511,
         value_serializer: Optional[Callable] = pickle.dumps,
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
@@ -55,6 +77,7 @@ class PersistDict(dict):
             expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
             key_serializer (Callable, default=key_to_string): Function to serialize keys before storing. If None, no serializer will be used, but this can lead to issue.
             key_unserializer (Callable, default=string_to_key): Function to deserialize keys after retrieval. If None, no unserializer will be used, but this can lead to issues.
+            key_size_limit (int, default=511): Maximum size for the key. If the key is larger than this it will be hashed then cropped.
             value_serializer (Callable, default=pickle.dumps): Function to serialize values before storing. If None, no serializer will be used, but this can lead to issue.
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
@@ -65,31 +88,18 @@ class PersistDict(dict):
         self.expiration_days = expiration_days
         self.database_path = Path(database_path)
         self.caching = caching
+        self.key_size_limit = key_size_limit
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
-            def key_serializer(inp):
-                if isinstance(inp, str):
-                    return inp.encode()
-                return inp
-            def key_unserializer(inp):
-                if hasattr(inp, "decode"):
-                    return inp.decode()
-                return inp
+            key_serializer = dummy_key_serializer
+            key_unserializer = dummy_key_unserializer
         self.key_serializer = key_serializer
         self.key_unserializer = key_unserializer
-
         if value_serializer is None or value_unserializer is None:
             assert value_serializer is None and value_unserializer is None, "If value_unserializer or value_serializer is None, the other one must be None too"
-            def value_serializer(inp):
-                if isinstance(inp, str):
-                    return inp.encode()
-                return inp
-            def value_unserializer(inp):
-                if hasattr(inp, "decode"):
-                    return inp.decode()
-                return inp
-
+            value_serializer = dummy_value_serializer
+            value_unserializer = dummy_value_unserializer
         self.value_serializer = value_serializer
         self.value_unserializer = value_unserializer
 
@@ -248,23 +258,27 @@ class PersistDict(dict):
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
         # self.__integrity_check__()
-        ks = self.key_serializer(key)
+        ks = self.key_serializer(self.hash_and_crop(key))
         val = self.val_db[ks]
+        assert self.metadata_db[ks]["fullkey"].startswith(key)
         self.metadata_db[ks]["atime"] = datetime.datetime.now()
         return val
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
         # self.__integrity_check__()
-        ks = self.key_serializer(key)
+        ks = self.key_serializer(self.hash_and_crop(key))
+        if ks in self.val_db:
+            assert self.metadata_db[ks]["fullkey"].startswith(key), f"Collision for key '{key}'"
         self.val_db[ks] = value
         t = datetime.datetime.now()
-        self.metadata_db[ks] = {"ctime": t, "atime": t}
+        self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
 
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
         # self.__integrity_check__()
-        ks = self.key_serializer(key)
+        ks = self.key_serializer(self.hash_and_crop(key))
+        assert self.metadata_db[ks]["fullkey"].startswith(key)
         del self.val_db[ks], self.metadata_db[ks]
 
     def clear(self) -> None:
@@ -280,7 +294,7 @@ class PersistDict(dict):
 
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
-        ks = self.key_serializer(key)
+        ks = self.key_serializer(self.hash_and_crop(key))
         return ks in self.val_db.keys()
 
     def __repr__(self) -> str:
@@ -290,19 +304,29 @@ class PersistDict(dict):
         return {k: v for k, v in self.items()}.__str__()
 
     def keys(self) -> Generator[str, None, None]:
-        "get the list of keys present in the db"
+        "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
-        for k in self.val_db.keys():
-            yield self.key_unserializer(k)
+        all_keys = list(self.val_db.keys())
+        all_fullkeys = {k: self.metadata_db[k]["fullkey"] for k in all_keys}
+        all_ctime = {k: self.metadata_db[k]["ctime"] for k in all_keys}
+
+        all_keys = sorted(all_keys, key=lambda k: all_ctime[k])
+        output = [all_fullkeys[k] for k in all_keys]
+        for k in output:
+            yield k
 
     def values(self) -> Generator[Any, None, None]:
         "get the list of values present in the db"
         self._log("getting values")
-        for k in self.val_db.keys():
-            self.metadata_db[k]["atime"] = datetime.datetime.now()
-            yield self.val_db[k]
+        for k in self.keys():
+            yield self[k]
 
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
-        for k in self.val_db.keys():
-            yield self.key_unserializer(k), self.val_db[k]
+        for k in self.keys():
+            yield k, self[k]
+
+    def hash_and_crop(self, string):
+        """Hash a string with SHA256 and crop to desired length (default 16 chars)"""
+        return hashlib.sha256(string.encode('utf-8')).hexdigest()[:self.key_size_limit]
+
