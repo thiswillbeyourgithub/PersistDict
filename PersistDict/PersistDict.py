@@ -1,3 +1,5 @@
+import dill
+import json
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 import pickle
