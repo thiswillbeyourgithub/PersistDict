@@ -28,6 +28,8 @@ class PersistDict(dict):
         self,
         database_path: Union[str, PosixPath],
         expiration_days: Optional[int] = 0,
+        key_serializer: Optional[Callable] = json.dumps,
+        key_unserializer: Optional[Callable] = json.loads,
         value_serializer: Optional[Callable] = pickle.dumps,
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
@@ -38,10 +40,13 @@ class PersistDict(dict):
 
         The PersistDict class provides a persistent dictionary-like interface, storing data in a LMDB database.
         It supports optional automatic expiration of entries.
+        Note that no checks are done to make sure the serializer is always the same. So if you change it and call the same db as before the serialization will fail.
 
         Args:
             database_path (Union[str, PosixPath]): Path to the LMDB database folder. Note that this is a folder, not a file.
             expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
+            key_serializer (Callable, default=json.dumps): Function to serialize keys before storing. If None, no serializer will be used, but this can lead to issue.
+            key_unserializer (Callable, default=json.loads): Function to deserialize keys after retrieval. If None, no unserializer will be used, but this can lead to issues.
             value_serializer (Callable, default=pickle.dumps): Function to serialize values before storing. If None, no serializer will be used, but this can lead to issue.
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
@@ -55,14 +60,21 @@ class PersistDict(dict):
 
         if value_serializer is None or value_unserializer is None:
             assert value_serializer is None and value_unserializer is None, "If value_unserializer or value_serializer is None, the other one must be None too"
-        if value_serializer is None:
             def value_serializer(inp):
                 return inp
-        if value_unserializer is None:
             def value_unserializer(inp):
                 return inp
         self.value_serializer = value_serializer
         self.value_unserializer = value_unserializer
+
+        if key_serializer is None or key_unserializer is None:
+            assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
+            def key_serializer(inp):
+                return inp
+            def key_unserializer(inp):
+                return inp
+        self.key_serializer = key_serializer
+        self.key_unserializer = key_unserializer
 
         extra_args = {}
         extra_args["cache"] = LRUCache128 if caching else DummyCache
@@ -157,10 +169,17 @@ class PersistDict(dict):
         self._log("checking integrity of db")
 
         for k in self.val_db.keys():
-            assert k in self.metadata_db, f"Item of key '{k}' is missing from metadata_db"
-            assert "atime" in self.metadata_db[k], f"Item of key '{k}' is missing atime metadata"
-            assert "ctime" in self.metadata_db[k], f"Item of key '{k}' is missing ctime metadata"
-            assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k}' has ctime after atime"
+            print(k)
+            try:
+                k2 = self.key_unserializer(k)
+            except Exception as e:
+                self._log(f"Couldn't unserialize key '{k}'. This might be due to changing the serialization in between runs.")
+                del self.val_db[k], self.metadata_db[k]
+                continue
+            assert k in self.metadata_db, f"Item of key '{k2}' is missing from metadata_db"
+            assert "atime" in self.metadata_db[k], f"Item of key '{k2}' is missing atime metadata"
+            assert "ctime" in self.metadata_db[k], f"Item of key '{k2}' is missing ctime metadata"
+            assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k2}' has ctime after atime"
 
         l1 = len(self.val_db)
         l2 = len(self.metadata_db)
@@ -202,27 +221,31 @@ class PersistDict(dict):
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
         # self.__integrity_check__()
-        val = self.value_unserializer(self.val_db[key])
-        self.metadata_db[key]["atime"] = datetime.datetime.now()
+        ks = self.key_serializer(key)
+        val = self.value_unserializer(self.val_db[ks])
+        self.metadata_db[ks]["atime"] = datetime.datetime.now()
         return val
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
         # self.__integrity_check__()
-        self.val_db[key] = self.value_serializer(value)
+        ks = self.key_serializer(key)
+        vs = self.value_serializer(value)
+        self.val_db[ks] = vs
         t = datetime.datetime.now()
-        self.metadata_db[key] = {"ctime": t, "atime": t}
+        self.metadata_db[ks] = {"ctime": t, "atime": t}
 
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
         # self.__integrity_check__()
-        del self.val_db[key], self.metadata_db[key]
+        ks = self.key_serializer(key)
+        del self.val_db[ks], self.metadata_db[ks]
 
     def clear(self) -> None:
         self._log("Clearing database")
-        keys = list(self.keys())
+        keys = list(self.val_db.keys())
         for k in keys:
-            del self[k]
+            del self.val_db[k], self.metadata_db[k]
         self.info_db["already_called"] = False
 
     def __len__(self) -> int:
@@ -231,7 +254,8 @@ class PersistDict(dict):
 
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
-        return key in self.val_db.keys()
+        ks = self.key_serializer(key)
+        return ks in self.val_db.keys()
 
     def __repr__(self) -> str:
         return {k: v for k, v in self.items()}.__repr__()
@@ -243,11 +267,7 @@ class PersistDict(dict):
         "get the list of keys present in the db"
         self._log("getting keys")
         for k in self.val_db.keys():
-            yield k
-        # sorted by ctime:
-        # keys = self.val_db.keys()
-        # ctime = {self.metadata_db[k]["ctime"] for k in keys}
-        # keys = sorted(keys, lambda k: ctime[k])
+            yield self.key_unserializer(k)
 
     def values(self) -> Generator[Any, None, None]:
         "get the list of values present in the db"
@@ -259,4 +279,4 @@ class PersistDict(dict):
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
         for k in self.val_db.keys():
-            yield k, self.value_unserializer(self.val_db[k])
+            yield self.key_unserializer(k), self.value_unserializer(self.val_db[k])
