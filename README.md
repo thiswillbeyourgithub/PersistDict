@@ -50,7 +50,7 @@ place encryption instead.
     * `git clone https://github.com/thiswillbeyourgithub/PersistDict`
     * `cd PersistDict`
     * `pip install -e .`
-    * To test that the code works fine: `cd PersistDict ; python PersistDict.py`
+    * To run tests: `cd PersistDict ; python -m pytest test.py`
 
 ``` python
 from PersistDict import PersistDict
