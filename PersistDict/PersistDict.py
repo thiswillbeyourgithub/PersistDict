@@ -82,26 +82,24 @@ class PersistDict(dict):
         self.key_serializer = key_serializer
         self.key_unserializer = key_unserializer
 
-        extra_args = {}
-        extra_args["cache"] = LRUCache128 if caching else DummyCache
 
         self.val_db = SafeLmdbDict(
             path=self.database_path,
             name="PersistDict_values",
             max_dbs=3,
-            **extra_args,
+            cache=LRUCache128 if self.caching else DummyCache,
         )
         self.metadata_db = SafeLmdbDict(
             path=self.database_path,
             name="PersistDict_metadata",
             max_dbs=3,
-            **extra_args,
+            cache=LRUCache128 if self.caching else DummyCache,
         )
         self.info_db = SafeLmdbDict(
             path=self.database_path,
             name="PersistDict_info",
             max_dbs=3,
-            **extra_args,
+            cache=LRUCache128 if self.caching else DummyCache,
         )
 
         # the db must be reset if the db file stops existing!
