@@ -1,6 +1,7 @@
 import base64
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
+from lmdb_dict.mapping.abc import LmdbDict
 import pickle
 import datetime
 from pathlib import Path, PosixPath
@@ -64,26 +65,47 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
         self.caching = caching
 
-        if value_serializer is None or value_unserializer is None:
-            assert value_serializer is None and value_unserializer is None, "If value_unserializer or value_serializer is None, the other one must be None too"
-            def value_serializer(inp):
-                return inp
-            def value_unserializer(inp):
-                return inp
-        self.value_serializer = value_serializer
-        self.value_unserializer = value_unserializer
-
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
             def key_serializer(inp):
+                if isinstance(inp, str):
+                    return inp.encode()
                 return inp
             def key_unserializer(inp):
+                if hasattr(inp, "decode"):
+                    return inp.decode()
                 return inp
         self.key_serializer = key_serializer
         self.key_unserializer = key_unserializer
 
+        if value_serializer is None or value_unserializer is None:
+            assert value_serializer is None and value_unserializer is None, "If value_unserializer or value_serializer is None, the other one must be None too"
+            def value_serializer(inp):
+                if isinstance(inp, str):
+                    return inp.encode()
+                return inp
+            def value_unserializer(inp):
+                if hasattr(inp, "decode"):
+                    return inp.decode()
+                return inp
 
-        self.val_db = SafeLmdbDict(
+        self.value_serializer = value_serializer
+        self.value_unserializer = value_unserializer
+
+        class CustomLmdbDict(LmdbDict):
+            """Like SafeLmdbDict but with our own serializer
+            """
+            __slots__ = ()
+
+            @staticmethod
+            def _deserialize_(raw):
+                return value_unserializer(raw)
+
+            @classmethod
+            def _serialize_(cls, value):
+                return value_serializer(value)
+
+        self.val_db = CustomLmdbDict(
             path=self.database_path,
             name="PersistDict_values",
             max_dbs=3,
