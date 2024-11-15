@@ -1,3 +1,4 @@
+import zlib
 import base64
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
@@ -22,10 +23,10 @@ except ImportError:
         print(message)
 
 def key_to_string(key):
-    return base64.b64encode(pickle.dumps(key)).decode('utf-8')
+    return base64.b64encode(zlib.compress(pickle.dumps(key))).decode('utf-8')
 
 def string_to_key(pickled_str):
-    return pickle.loads(base64.b64decode(pickled_str.encode('utf-8')))
+    return pickle.loads(zlib.decompress(base64.b64decode(pickled_str.encode('utf-8'))))
 
 @typechecker
 class PersistDict(dict):

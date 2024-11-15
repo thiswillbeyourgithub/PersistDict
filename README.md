@@ -17,7 +17,7 @@ I initially made an implementation that used sqlite (with support for encryption
 - **atime and ctime**: each entry includes a creation time and a last access time.
 - **expiration**: won't grow too large because old keys are automatically removed after a given amount of days.
 - **cached**: Uses a `LRUCache128` from [cachetools](https://github.com/tkem/cachetools/).
-- **customizable serializer for keys and values**: This can enable encryption, compression etc...
+- **customizable serializer for keys and values**: This can enable encryption, compression etc... By default, keys are compressed as [lmdb has a 511 default key length](https://stackoverflow.com/questions/66456228/increase-max-key-size-lmdb-key-value-database-in-python).
 - **only one dependency needed** Only `lmdb-dict-full` is needed. If you have [beartype](https://github.com/beartype/beartype/) installed it will be used, same with [loguru](https://loguru.readthedocs.io/).
 
 
