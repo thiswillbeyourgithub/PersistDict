@@ -1,5 +1,4 @@
-import dill
-import json
+import base64
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 import pickle
@@ -21,6 +20,11 @@ except ImportError:
     def debug(message: str) -> None:
         print(message)
 
+def key_to_string(key):
+    return base64.b64encode(pickle.dumps(key)).decode('utf-8')
+
+def string_to_key(pickled_str):
+    return pickle.loads(base64.b64decode(pickled_str.encode('utf-8')))
 
 @typechecker
 class PersistDict(dict):
@@ -30,8 +34,8 @@ class PersistDict(dict):
         self,
         database_path: Union[str, PosixPath],
         expiration_days: Optional[int] = 0,
-        key_serializer: Optional[Callable] = json.dumps,
-        key_unserializer: Optional[Callable] = json.loads,
+        key_serializer: Optional[Callable] = key_to_string,
+        key_unserializer: Optional[Callable] = string_to_key,
         value_serializer: Optional[Callable] = pickle.dumps,
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
@@ -47,8 +51,8 @@ class PersistDict(dict):
         Args:
             database_path (Union[str, PosixPath]): Path to the LMDB database folder. Note that this is a folder, not a file.
             expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
-            key_serializer (Callable, default=json.dumps): Function to serialize keys before storing. If None, no serializer will be used, but this can lead to issue.
-            key_unserializer (Callable, default=json.loads): Function to deserialize keys after retrieval. If None, no unserializer will be used, but this can lead to issues.
+            key_serializer (Callable, default=key_to_string): Function to serialize keys before storing. If None, no serializer will be used, but this can lead to issue.
+            key_unserializer (Callable, default=string_to_key): Function to deserialize keys after retrieval. If None, no unserializer will be used, but this can lead to issues.
             value_serializer (Callable, default=pickle.dumps): Function to serialize values before storing. If None, no serializer will be used, but this can lead to issue.
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
