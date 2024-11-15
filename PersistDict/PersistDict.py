@@ -206,7 +206,6 @@ class PersistDict(dict):
         self._log("checking integrity of db")
 
         for k in self.val_db.keys():
-            print(k)
             try:
                 k2 = self.key_unserializer(k)
             except Exception as e:
