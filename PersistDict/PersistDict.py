@@ -121,18 +121,21 @@ class PersistDict(dict):
             name="PersistDict_values",
             max_dbs=3,
             cache=LRUCache128 if self.caching else DummyCache,
+            map_size=10485760 * 1000,
         )
         self.metadata_db = SafeLmdbDict(
             path=self.database_path,
             name="PersistDict_metadata",
             max_dbs=3,
             cache=LRUCache128 if self.caching else DummyCache,
+            map_size=10485760 * 1000,
         )
         self.info_db = SafeLmdbDict(
             path=self.database_path,
             name="PersistDict_info",
             max_dbs=3,
             cache=LRUCache128 if self.caching else DummyCache,
+            map_size=10485760 * 1000,
         )
 
         # the db must be reset if the db file stops existing!
