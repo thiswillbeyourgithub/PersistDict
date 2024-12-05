@@ -7,11 +7,14 @@ from lmdb_dict.mapping.abc import LmdbDict
 import pickle
 import datetime
 from pathlib import Path, PosixPath
-from typing import Union, Any, Optional, Tuple, Generator, Callable
+try:
+    from beartype.typing import Union, Any, Optional, Tuple, Generator, Callable
+except Exception:
+    from typing import Union, Any, Optional, Tuple, Generator, Callable
 
 # only use those libs if present:
 try:
-    from beartype import beartype as typechecker
+    from beartype.beartype import beartype as typechecker
 except ImportError:
     def typechecker(func: Callable) -> Callable:
         return func
