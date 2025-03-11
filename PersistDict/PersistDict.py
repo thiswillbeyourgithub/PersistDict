@@ -5,6 +5,7 @@ import os
 import threading
 import concurrent.futures
 import time
+import queue
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 from lmdb_dict.mapping.abc import LmdbDict
@@ -103,6 +104,12 @@ class PersistDict(dict):
         self._expire_lock = threading.Lock()
         self._expire_thread = None
         self._stop_expire_thread = threading.Event()
+        
+        # For background initialization
+        self._init_lock = threading.Lock()
+        self._init_thread = None
+        self._init_complete = threading.Event()
+        self._init_queue = queue.Queue()
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
@@ -167,16 +174,70 @@ class PersistDict(dict):
         elif len(self.val_db) == 0:
             self.info_db["already_called"] = False
 
-        # checks
-        self.__integrity_check__()
+        # Start background initialization thread
+        self._start_init_thread()
         
         # Start expiration thread if needed
         if self.expiration_days and self.async_expire:
             self._start_expire_thread()
-        else:
-            # Run once synchronously if async is disabled
-            self.__expire__()
 
+    def _start_init_thread(self) -> None:
+        """
+        Start the background thread for initialization tasks.
+        
+        This method creates and starts a daemon thread that performs integrity checks
+        and initial expiration in the background, allowing the main thread to continue.
+        """
+        if self._init_thread is not None and self._init_thread.is_alive():
+            self._log("Init thread already running")
+            return
+            
+        self._init_complete.clear()
+        self._init_thread = threading.Thread(
+            target=self._init_thread_worker,
+            daemon=True,
+            name="PersistDict-Init"
+        )
+        self._init_thread.start()
+        self._log("Started background initialization thread")
+        
+    def _init_thread_worker(self) -> None:
+        """
+        Worker function for the initialization thread.
+        
+        This function runs integrity checks and initial expiration in the background.
+        """
+        try:
+            # Run integrity check
+            self.__integrity_check__()
+            
+            # Run initial expiration if needed and not using async expiration
+            if self.expiration_days and not self.async_expire:
+                self.__expire__()
+                
+            # Process any queued operations that came in during initialization
+            while True:
+                try:
+                    func, args, kwargs, result_queue = self._init_queue.get(block=False)
+                    try:
+                        result = func(*args, **kwargs)
+                        if result_queue:
+                            result_queue.put((True, result))
+                    except Exception as e:
+                        if result_queue:
+                            result_queue.put((False, e))
+                    finally:
+                        self._init_queue.task_done()
+                except queue.Empty:
+                    break
+        except Exception as e:
+            self._log(f"Error in initialization thread: {str(e)}")
+        finally:
+            # Set the completion flag with the lock to ensure visibility
+            with self._init_lock:
+                self._init_complete.set()
+            self._log("Background initialization completed")
+    
     def _start_expire_thread(self) -> None:
         """
         Start the background thread for periodic expiration checks.
@@ -347,35 +408,110 @@ class PersistDict(dict):
 
         return self
 
+    def wait_for_init(self, timeout=None) -> bool:
+        """
+        Wait for the initialization thread to complete.
+        
+        Args:
+            timeout (float, optional): Maximum time to wait in seconds.
+                                      If None, wait indefinitely.
+        
+        Returns:
+            bool: True if initialization completed, False if timed out.
+        """
+        if self._init_thread is None:
+            return True
+            
+        return self._init_complete.wait(timeout)
+        
+    def _ensure_init_complete(self, func, *args, **kwargs):
+        """
+        Ensure initialization is complete before executing a function.
+        
+        If initialization is still in progress, either wait for it or
+        queue the operation to be executed by the init thread.
+        
+        Args:
+            func: The function to execute
+            *args, **kwargs: Arguments to pass to the function
+            
+        Returns:
+            The result of the function call
+        """
+        # If initialization is complete, just run the function
+        if self._init_complete.is_set():
+            return func(*args, **kwargs)
+            
+        # If we're in the init thread, just run the function
+        if threading.current_thread().name == "PersistDict-Init":
+            return func(*args, **kwargs)
+            
+        # Check again with a lock to avoid race conditions
+        with self._init_lock:
+            if self._init_complete.is_set():
+                return func(*args, **kwargs)
+                
+            # Queue the operation
+            result_queue = queue.Queue()
+            self._init_queue.put((func, args, kwargs, result_queue))
+        
+        # Wait for result with a short timeout
+        try:
+            success, result = result_queue.get(timeout=0.1)
+            if not success:
+                raise result  # Re-raise the exception
+            return result
+        except queue.Empty:
+            # If we timed out waiting for the result, wait for init to complete
+            # and then execute the function directly
+            self.wait_for_init()
+            return func(*args, **kwargs)
+    
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
-        ks = self.key_serializer(self.hash_and_crop(key))
-        val = self.val_db[ks]
-        assert self.metadata_db[ks]["fullkey"].startswith(key)
-        self.metadata_db[ks]["atime"] = datetime.datetime.now()
-        return val
+        
+        def _get_item(key):
+            ks = self.key_serializer(self.hash_and_crop(key))
+            val = self.val_db[ks]
+            assert self.metadata_db[ks]["fullkey"].startswith(key)
+            self.metadata_db[ks]["atime"] = datetime.datetime.now()
+            return val
+            
+        return self._ensure_init_complete(_get_item, key)
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
-        ks = self.key_serializer(self.hash_and_crop(key))
-        if ks in self.val_db:
-            assert self.metadata_db[ks]["fullkey"].startswith(key), f"Collision for key '{key}'"
-        self.val_db[ks] = value
-        t = datetime.datetime.now()
-        self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
+        
+        def _set_item(key, value):
+            ks = self.key_serializer(self.hash_and_crop(key))
+            if ks in self.val_db:
+                assert self.metadata_db[ks]["fullkey"].startswith(key), f"Collision for key '{key}'"
+            self.val_db[ks] = value
+            t = datetime.datetime.now()
+            self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
+            
+        self._ensure_init_complete(_set_item, key, value)
 
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
-        ks = self.key_serializer(self.hash_and_crop(key))
-        assert self.metadata_db[ks]["fullkey"].startswith(key)
-        del self.val_db[ks], self.metadata_db[ks]
+        
+        def _del_item(key):
+            ks = self.key_serializer(self.hash_and_crop(key))
+            assert self.metadata_db[ks]["fullkey"].startswith(key)
+            del self.val_db[ks], self.metadata_db[ks]
+            
+        self._ensure_init_complete(_del_item, key)
 
     def clear(self) -> None:
         self._log("Clearing database")
-        keys = list(self.val_db.keys())
-        for k in keys:
-            del self.val_db[k], self.metadata_db[k]
-        self.info_db["already_called"] = False
+        
+        def _clear():
+            keys = list(self.val_db.keys())
+            for k in keys:
+                del self.val_db[k], self.metadata_db[k]
+            self.info_db["already_called"] = False
+            
+        self._ensure_init_complete(_clear)
         
     def stop_expire_thread(self) -> None:
         """
@@ -391,18 +527,27 @@ class PersistDict(dict):
 
     def __len__(self) -> int:
         self._log("getting length")
-        return len(self.val_db)
+        
+        def _len():
+            return len(self.val_db)
+            
+        return self._ensure_init_complete(_len)
 
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
-        ks = self.key_serializer(self.hash_and_crop(key))
-        return ks in self.val_db.keys()
+        
+        def _contains(key):
+            ks = self.key_serializer(self.hash_and_crop(key))
+            return ks in self.val_db.keys()
+            
+        return self._ensure_init_complete(_contains, key)
 
     def __del__(self) -> None:
         """
         Clean up resources when the object is garbage collected.
         """
         self.stop_expire_thread()
+        self.wait_for_init(timeout=0.5)  # Give init thread a chance to finish
         
     def __repr__(self) -> str:
         return {k: v for k, v in self.items()}.__repr__()
@@ -413,6 +558,10 @@ class PersistDict(dict):
     def keys(self) -> Generator[str, None, None]:
         "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
+        
+        # Wait for initialization to complete
+        self.wait_for_init()
+        
         all_keys = list(self.val_db.keys())
         all_fullkeys = {k: self.metadata_db[k]["fullkey"] for k in all_keys}
         all_ctime = {k: self.metadata_db[k]["ctime"] for k in all_keys}
