@@ -1,6 +1,9 @@
 import zlib
 import base64
 import hashlib
+import os
+import threading
+import concurrent.futures
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 from lmdb_dict.mapping.abc import LmdbDict
@@ -8,9 +11,9 @@ import pickle
 import datetime
 from pathlib import Path, PosixPath
 try:
-    from beartype.typing import Union, Any, Optional, Tuple, Generator, Callable
+    from beartype.typing import Union, Any, Optional, Tuple, Generator, Callable, List, Dict
 except Exception:
-    from typing import Union, Any, Optional, Tuple, Generator, Callable
+    from typing import Union, Any, Optional, Tuple, Generator, Callable, List, Dict
 
 # only use those libs if present:
 try:
@@ -74,6 +77,9 @@ class PersistDict(dict):
         The PersistDict class provides a persistent dictionary-like interface, storing data in a LMDB database.
         It supports optional automatic expiration of entries.
         Note that no checks are done to make sure the serializer is always the same. So if you change it and call the same db as before the serialization will fail.
+
+        Environment Variables:
+            PERSISTDICT_THREADS: Number of threads to use for parallel operations (default: -1, which uses all available cores)
 
         Args:
             database_path (Union[str, PosixPath]): Path to the LMDB database folder. Note that this is a folder, not a file.
@@ -198,6 +204,40 @@ class PersistDict(dict):
         assert diff >= 0, diff
         self._log(f"expirating removed {diff} keys, remaining: {len(keysafter)}")
 
+    def _get_n_jobs(self) -> int:
+        """
+        Get the number of threads to use for parallel operations.
+        
+        Returns:
+            int: Number of threads to use. If -1, uses all available cores.
+        """
+        try:
+            n_jobs = int(os.environ.get("PERSISTDICT_THREADS", -1))
+            if n_jobs < 1 and n_jobs != -1:
+                self._log(f"Invalid PERSISTDICT_THREADS value: {n_jobs}, using all available cores")
+                return -1
+            return n_jobs
+        except (ValueError, TypeError):
+            self._log(f"Invalid PERSISTDICT_THREADS value, using all available cores")
+            return -1
+    
+    def _unserialize_key_safe(self, k: str) -> Optional[Tuple[str, Any]]:
+        """
+        Safely unserialize a key and return the result along with the original key.
+        
+        Args:
+            k (str): The key to unserialize
+            
+        Returns:
+            Optional[Tuple[str, Any]]: A tuple of (original_key, unserialized_key) or None if unserialization failed
+        """
+        try:
+            k2 = self.key_unserializer(k)
+            return (k, k2)
+        except Exception as e:
+            self._log(f"Couldn't unserialize key '{k}'. This might be due to changing the serialization in between runs.")
+            return (k, None)
+
     def __integrity_check__(self) -> None:
         """
         Perform an integrity check on the database.
@@ -205,24 +245,75 @@ class PersistDict(dict):
         This method checks the integrity of the LMDB database and verifies the consistency
         of creation times (ctime) and access times (atime) for all entries, as
         well as check that they all have the same keys.
+        
+        The key unserialization is performed in parallel using multiple threads.
+        The number of threads can be controlled with the PERSISTDICT_THREADS environment variable.
 
         Note:
             This method is called internally and should not be called directly by users.
         """
         self._log("checking integrity of db")
-
-        for k in self.val_db.keys():
+        
+        # Get all keys from the database
+        all_keys = list(self.val_db.keys())
+        if not all_keys:
+            # No keys to check
+            self._log("No keys to check integrity")
+            
+            # Still check the info_db
+            assert "version" in self.info_db, "info_db is missing the key 'version'"
+            assert "ctime" in self.info_db, "info_db is missing the key 'ctime'"
+            assert "already_called" in self.info_db, "info_db is missing the key 'already_called'"
+            return
+            
+        # Determine number of threads to use
+        n_jobs = self._get_n_jobs()
+        
+        # Process keys in parallel
+        keys_to_delete = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=None if n_jobs == -1 else n_jobs
+        ) as executor:
+            # Submit all keys for unserialization
+            future_to_key = {
+                executor.submit(self._unserialize_key_safe, k): k 
+                for k in all_keys
+            }
+            
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_key):
+                result = future.result()
+                if result is None:
+                    continue
+                    
+                k, k2 = result
+                
+                # If unserialization failed, mark for deletion
+                if k2 is None:
+                    keys_to_delete.append(k)
+                    continue
+                
+                # Check metadata integrity
+                try:
+                    assert k in self.metadata_db, f"Item of key '{k2}' is missing from metadata_db"
+                    assert "atime" in self.metadata_db[k], f"Item of key '{k2}' is missing atime metadata"
+                    assert "ctime" in self.metadata_db[k], f"Item of key '{k2}' is missing ctime metadata"
+                    assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k2}' has ctime after atime"
+                except AssertionError as e:
+                    self._log(f"Integrity check failed for key '{k}': {str(e)}")
+                    keys_to_delete.append(k)
+        
+        # Delete keys that failed integrity check
+        for k in keys_to_delete:
             try:
-                k2 = self.key_unserializer(k)
-            except Exception as e:
-                self._log(f"Couldn't unserialize key '{k}'. This might be due to changing the serialization in between runs.")
                 del self.val_db[k], self.metadata_db[k]
-                continue
-            assert k in self.metadata_db, f"Item of key '{k2}' is missing from metadata_db"
-            assert "atime" in self.metadata_db[k], f"Item of key '{k2}' is missing atime metadata"
-            assert "ctime" in self.metadata_db[k], f"Item of key '{k2}' is missing ctime metadata"
-            assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k2}' has ctime after atime"
-
+                self._log(f"Deleted key '{k}' due to integrity check failure")
+            except Exception as e:
+                self._log(f"Error deleting key '{k}': {str(e)}")
+        
+        # Final checks
         l1 = len(self.val_db)
         l2 = len(self.metadata_db)
         assert l1 == l2, f"val_db and metadata_db sizes differ: {l1} vs {l2}"
