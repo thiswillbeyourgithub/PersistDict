@@ -196,7 +196,7 @@ class PersistDict(dict):
         keysafter = list(self.val_db.keys())
         diff = len(keysbefore) - len(keysafter)
         assert diff >= 0, diff
-        self._log(f"expirating removed {diff} keys, remaining: {keysafter}")
+        self._log(f"expirating removed {diff} keys, remaining: {len(keysafter)}")
 
     def __integrity_check__(self) -> None:
         """
