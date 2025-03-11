@@ -165,7 +165,6 @@ class PersistDict(dict):
         # checks
         self.__integrity_check__()
         self.__expire__()
-        self.__integrity_check__()
 
     def __expire__(self) -> None:
         """
@@ -353,7 +352,6 @@ class PersistDict(dict):
 
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
-        # self.__integrity_check__()
         ks = self.key_serializer(self.hash_and_crop(key))
         val = self.val_db[ks]
         assert self.metadata_db[ks]["fullkey"].startswith(key)
@@ -362,7 +360,6 @@ class PersistDict(dict):
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
-        # self.__integrity_check__()
         ks = self.key_serializer(self.hash_and_crop(key))
         if ks in self.val_db:
             assert self.metadata_db[ks]["fullkey"].startswith(key), f"Collision for key '{key}'"
@@ -372,7 +369,6 @@ class PersistDict(dict):
 
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
-        # self.__integrity_check__()
         ks = self.key_serializer(self.hash_and_crop(key))
         assert self.metadata_db[ks]["fullkey"].startswith(key)
         del self.val_db[ks], self.metadata_db[ks]
