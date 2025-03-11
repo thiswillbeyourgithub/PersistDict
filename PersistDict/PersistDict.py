@@ -58,7 +58,7 @@ def dummy_value_unserializer(inp):
 
 @typechecker
 class PersistDict(dict):
-    __VERSION__: str = "0.2.4"
+    __VERSION__: str = "0.2.5"
 
     def __init__(
         self,
