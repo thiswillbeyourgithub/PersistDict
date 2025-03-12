@@ -83,6 +83,7 @@ class PersistDict(dict):
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
         verbose: bool = False,
+        background_thread: bool = True,
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -102,6 +103,9 @@ class PersistDict(dict):
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
             verbose (bool, default=False): If True, enables verbose logging.
+            background_thread (bool, default=True): If True, runs integrity check and expiration in a background thread.
+                If False, these operations run in the current thread during initialization. Set to False for better
+                determinism or in environments where threading is problematic.
         """
         self.verbose = verbose
         self._log(".__init__")
@@ -109,6 +113,7 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
         self.caching = caching
         self.key_size_limit = key_size_limit
+        self.background_thread = background_thread
         
         # Thread safety
         self._lock = threading.RLock()
@@ -180,12 +185,20 @@ class PersistDict(dict):
         if "oldest_atime" not in self.info_db:
             self.info_db["oldest_atime"] = datetime.datetime.now()
 
-        # Start background thread for integrity check and expiration
-        self._start_background_thread()
+        # Run integrity check and expiration
+        if self.background_thread:
+            # Start background thread for integrity check and expiration
+            self._start_background_thread()
+        else:
+            # Run in current thread
+            self._log("Running integrity check and expiration in current thread")
+            self.__integrity_check__()
+            self.__expire__()
 
     def _start_background_thread(self) -> None:
         """
         Start a background thread for integrity check and expiration.
+        Only used when background_thread=True.
         """
         self._log("Starting background thread for integrity check and expiration")
         self._stop_event.clear()
