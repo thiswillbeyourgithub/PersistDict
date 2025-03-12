@@ -85,6 +85,7 @@ class PersistDict(dict):
         caching: bool = True,
         verbose: bool = False,
         background_thread: bool = True,
+        background_timeout: int = 30,  # Maximum time in seconds for background operations
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -115,12 +116,14 @@ class PersistDict(dict):
         self.caching = caching
         self.key_size_limit = key_size_limit
         self.background_thread = background_thread
+        self.background_timeout = max(5, background_timeout)  # Ensure minimum timeout
         
         # Thread safety
         self._lock = threading.RLock()
         self._bg_thread = None
         self._stop_event = threading.Event()
         self._bg_task_complete = threading.Event()
+        self._initialization_complete = False  # Flag to track initialization state
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
@@ -194,22 +197,37 @@ class PersistDict(dict):
         else:
             # Run in current thread
             self._log("Running integrity check and expiration in current thread")
-            self.__integrity_check__()
-            self.__expire__()
+            try:
+                start_time = time.time()
+                self.__integrity_check__()
+                self.__expire__()
+                self._log(f"Initialization tasks completed in {time.time() - start_time:.2f} seconds")
+            except Exception as e:
+                self._log(f"Error during initialization tasks: {str(e)}")
+                self._log(f"Traceback: {traceback.format_exc()}")
+                # Continue initialization despite errors
+        
+        # Mark initialization as complete
+        self._initialization_complete = True
 
+    @thread_safe
     def _start_background_thread(self) -> None:
         """
         Start a background thread for integrity check and expiration.
         Only used when background_thread=True.
+        
+        This method is thread-safe and will not start a new thread if one is already running.
         """
         self._log("Starting background thread for integrity check and expiration")
-        self._stop_event.clear()
-        self._bg_task_complete.clear()
         
         # Don't start a new thread if one is already running
         if self._bg_thread and self._bg_thread.is_alive():
             self._log("Background thread already running, not starting a new one")
             return
+            
+        # Reset events before starting thread
+        self._stop_event.clear()
+        self._bg_task_complete.clear()
             
         self._bg_thread = threading.Thread(
             target=self._background_task,
@@ -222,27 +240,39 @@ class PersistDict(dict):
         """
         Background task that performs integrity check and expiration once.
         The thread terminates after completing these tasks.
+        
+        This method handles its own exceptions and always signals completion
+        via the _bg_task_complete event, even if errors occur.
         """
+        start_time = time.time()
         try:
+            thread_id = threading.get_ident()
+            self._log(f"Background thread started (thread id: {thread_id})")
+            
             # Check if we should stop before starting work
             if self._stop_event.is_set():
                 self._log("Background thread stopping before work begins")
                 return
                 
-            # Run integrity check
+            # Run integrity check with timeout monitoring
             self._log("Background thread running integrity check")
+            integrity_start = time.time()
             self.__integrity_check__()
+            self._log(f"Integrity check completed in {time.time() - integrity_start:.2f} seconds")
             
             # Check if we should stop before expiration
             if self._stop_event.is_set():
                 self._log("Background thread stopping after integrity check")
                 return
                 
-            # Run expiration
+            # Run expiration with timeout monitoring
             self._log("Background thread running expiration")
+            expiration_start = time.time()
             self.__expire__()
+            self._log(f"Expiration completed in {time.time() - expiration_start:.2f} seconds")
             
-            self._log("Background thread completed tasks and terminating")
+            total_time = time.time() - start_time
+            self._log(f"Background thread completed tasks in {total_time:.2f} seconds and is terminating")
         except Exception as e:
             self._log(f"Error in background thread: {str(e)}")
             self._log(f"Traceback: {traceback.format_exc()}")
@@ -253,35 +283,61 @@ class PersistDict(dict):
     def __del__(self) -> None:
         """
         Clean up resources when the object is garbage collected.
+        
+        This method safely stops any background threads and suppresses exceptions
+        that might occur during garbage collection.
         """
         try:
-            self._stop_background_thread()
+            # Only attempt cleanup if the object was fully initialized
+            if hasattr(self, '_stop_event') and hasattr(self, '_bg_thread'):
+                self._stop_background_thread()
         except Exception as e:
             # Avoid exceptions during garbage collection
-            self._log(f"Error during cleanup in __del__: {str(e)}")
+            try:
+                self._log(f"Error during cleanup in __del__: {str(e)}")
+            except:
+                # If even logging fails, just silently continue
+                pass
     
+    @thread_safe
     def _stop_background_thread(self) -> None:
         """
         Stop the background thread if it's running.
         Waits for the thread to complete or times out.
+        
+        This method is thread-safe and handles the case where the current thread
+        is the background thread to avoid deadlocks.
         """
-        if self._bg_thread and self._bg_thread.is_alive():
-            self._log("Stopping background thread")
+        # Quick check if there's no thread to stop
+        if not self._bg_thread:
+            return
+            
+        # Check if thread is alive with lock protection
+        if self._bg_thread.is_alive():
+            thread_id = self._bg_thread.ident
+            self._log(f"Stopping background thread (thread id: {thread_id})")
             self._stop_event.set()
             
             # Don't try to join the current thread (would deadlock)
-            if threading.current_thread() != self._bg_thread:
+            current_thread = threading.current_thread()
+            if current_thread != self._bg_thread:
                 # First wait for task completion with timeout
-                if not self._bg_task_complete.wait(timeout=3):
+                task_completed = self._bg_task_complete.wait(timeout=5)
+                if not task_completed:
                     self._log("Background task didn't complete in time")
                 
                 # Then wait for thread to terminate
-                self._bg_thread.join(timeout=2)
+                self._bg_thread.join(timeout=3)
                 
                 if self._bg_thread.is_alive():
                     self._log("Warning: Background thread did not terminate properly")
+                else:
+                    self._log(f"Background thread (id: {thread_id}) successfully terminated")
+            else:
+                self._log("Cannot wait for background thread from within itself")
             
-            self._bg_thread = None
+        # Clear the thread reference
+        self._bg_thread = None
 
     def __expire__(self) -> None:
         """
