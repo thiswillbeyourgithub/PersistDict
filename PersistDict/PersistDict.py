@@ -6,6 +6,7 @@ import threading
 import concurrent.futures
 import time
 import functools
+import traceback
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 from lmdb_dict.mapping.abc import LmdbDict
@@ -119,6 +120,7 @@ class PersistDict(dict):
         self._lock = threading.RLock()
         self._bg_thread = None
         self._stop_event = threading.Event()
+        self._bg_task_complete = threading.Event()
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
@@ -202,6 +204,13 @@ class PersistDict(dict):
         """
         self._log("Starting background thread for integrity check and expiration")
         self._stop_event.clear()
+        self._bg_task_complete.clear()
+        
+        # Don't start a new thread if one is already running
+        if self._bg_thread and self._bg_thread.is_alive():
+            self._log("Background thread already running, not starting a new one")
+            return
+            
         self._bg_thread = threading.Thread(
             target=self._background_task,
             daemon=True,
@@ -215,10 +224,20 @@ class PersistDict(dict):
         The thread terminates after completing these tasks.
         """
         try:
+            # Check if we should stop before starting work
+            if self._stop_event.is_set():
+                self._log("Background thread stopping before work begins")
+                return
+                
             # Run integrity check
             self._log("Background thread running integrity check")
             self.__integrity_check__()
             
+            # Check if we should stop before expiration
+            if self._stop_event.is_set():
+                self._log("Background thread stopping after integrity check")
+                return
+                
             # Run expiration
             self._log("Background thread running expiration")
             self.__expire__()
@@ -226,22 +245,42 @@ class PersistDict(dict):
             self._log("Background thread completed tasks and terminating")
         except Exception as e:
             self._log(f"Error in background thread: {str(e)}")
+            self._log(f"Traceback: {traceback.format_exc()}")
+        finally:
+            # Signal that the background task is complete
+            self._bg_task_complete.set()
     
     def __del__(self) -> None:
         """
         Clean up resources when the object is garbage collected.
         """
-        self._stop_background_thread()
+        try:
+            self._stop_background_thread()
+        except Exception as e:
+            # Avoid exceptions during garbage collection
+            self._log(f"Error during cleanup in __del__: {str(e)}")
     
     def _stop_background_thread(self) -> None:
         """
         Stop the background thread if it's running.
+        Waits for the thread to complete or times out.
         """
         if self._bg_thread and self._bg_thread.is_alive():
             self._log("Stopping background thread")
             self._stop_event.set()
+            
+            # Don't try to join the current thread (would deadlock)
             if threading.current_thread() != self._bg_thread:
-                self._bg_thread.join(timeout=5)  # Wait up to 5 seconds
+                # First wait for task completion with timeout
+                if not self._bg_task_complete.wait(timeout=3):
+                    self._log("Background task didn't complete in time")
+                
+                # Then wait for thread to terminate
+                self._bg_thread.join(timeout=2)
+                
+                if self._bg_thread.is_alive():
+                    self._log("Warning: Background thread did not terminate properly")
+            
             self._bg_thread = None
 
     def __expire__(self) -> None:
@@ -271,7 +310,10 @@ class PersistDict(dict):
             return
             
         try:
-            assert self.expiration_days > 0, "expiration_days has to be a positive int or 0 to disable"
+            if self.expiration_days <= 0:
+                self._log("Invalid expiration_days value, must be positive or 0")
+                return
+                
             expiration_date = datetime.datetime.now() - datetime.timedelta(days=self.expiration_days)
             
             # Skip expiration check if oldest atime is newer than expiration date
@@ -282,17 +324,34 @@ class PersistDict(dict):
             # Get keys to expire
             keys_to_delete = []
             oldest_atime = None
-            for k in self.val_db.keys():
+            all_keys = list(self.val_db.keys())
+            
+            for k in all_keys:
+                # Check if we should stop
+                if self._stop_event.is_set():
+                    self._log("Expiration interrupted by stop event")
+                    return
+                    
                 try:
+                    if k not in self.metadata_db:
+                        self._log(f"Missing metadata for key {k}, marking for deletion")
+                        keys_to_delete.append(k)
+                        continue
+                        
+                    if "atime" not in self.metadata_db[k]:
+                        self._log(f"Missing atime for key {k}, marking for deletion")
+                        keys_to_delete.append(k)
+                        continue
+                        
                     current_atime = self.metadata_db[k]["atime"]
                     if oldest_atime is None or current_atime < oldest_atime:
                         oldest_atime = current_atime
                         
                     if current_atime <= expiration_date:
                         keys_to_delete.append(k)
-                except KeyError:
-                    # Handle case where metadata might be missing
-                    self._log(f"Missing metadata for key {k}, marking for deletion")
+                except Exception as e:
+                    # Handle any unexpected errors when checking keys
+                    self._log(f"Error checking expiration for key {k}: {str(e)}")
                     keys_to_delete.append(k)
             
             # Update oldest_atime in info_db
@@ -305,17 +364,26 @@ class PersistDict(dict):
                 
             # Delete expired keys
             total_keys = len(self.val_db)
+            deleted_count = 0
+            
             for k in keys_to_delete:
+                # Check if we should stop
+                if self._stop_event.is_set():
+                    self._log(f"Expiration deletion interrupted after {deleted_count}/{len(keys_to_delete)} keys")
+                    break
+                    
                 try:
                     del self.val_db[k]
                     if k in self.metadata_db:
                         del self.metadata_db[k]
+                    deleted_count += 1
                 except Exception as e:
                     self._log(f"Error deleting expired key {k}: {str(e)}")
                     
-            self._log(f"Expiration removed {len(keys_to_delete)} keys, remaining: {len(self.val_db)}")
+            self._log(f"Expiration removed {deleted_count} keys, remaining: {len(self.val_db)}")
         except Exception as e:
             self._log(f"Error during expiration: {str(e)}")
+            self._log(f"Traceback: {traceback.format_exc()}")
 
     @thread_safe
     def __integrity_check__(self) -> None:
@@ -334,22 +402,49 @@ class PersistDict(dict):
         self._log("checking integrity of db")
         
         oldest_atime = None
+        keys_to_check = list(self.val_db.keys())
         
-        for k in self.val_db.keys():
+        for k in keys_to_check:
+            # Check if we should stop
+            if self._stop_event.is_set():
+                self._log("Integrity check interrupted by stop event")
+                return
+                
             try:
                 k2 = self.key_unserializer(k)
             except Exception as e:
-                self._log(f"Couldn't unserialize key '{k}'. This might be due to changing the serialization in between runs.")
-                del self.val_db[k], self.metadata_db[k]
+                self._log(f"Couldn't unserialize key '{k}'. This might be due to changing the serialization in between runs. Error: {str(e)}")
+                try:
+                    del self.val_db[k]
+                    if k in self.metadata_db:
+                        del self.metadata_db[k]
+                except Exception as del_err:
+                    self._log(f"Error deleting corrupted key: {str(del_err)}")
                 continue
-            assert k in self.metadata_db, f"Item of key '{k2}' is missing from metadata_db"
-            assert "atime" in self.metadata_db[k], f"Item of key '{k2}' is missing atime metadata"
-            assert "ctime" in self.metadata_db[k], f"Item of key '{k2}' is missing ctime metadata"
-            assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k2}' has ctime after atime"
-            
-            # Track oldest atime
-            if oldest_atime is None or self.metadata_db[k]["atime"] < oldest_atime:
-                oldest_atime = self.metadata_db[k]["atime"]
+                
+            try:
+                if k not in self.metadata_db:
+                    self._log(f"Item of key '{k2}' is missing from metadata_db, removing from val_db")
+                    del self.val_db[k]
+                    continue
+                    
+                if "atime" not in self.metadata_db[k]:
+                    self._log(f"Item of key '{k2}' is missing atime metadata, fixing")
+                    self.metadata_db[k]["atime"] = datetime.datetime.now()
+                    
+                if "ctime" not in self.metadata_db[k]:
+                    self._log(f"Item of key '{k2}' is missing ctime metadata, fixing")
+                    self.metadata_db[k]["ctime"] = datetime.datetime.now()
+                    
+                if self.metadata_db[k]["ctime"] > self.metadata_db[k]["atime"]:
+                    self._log(f"Item of key '{k2}' has ctime after atime, fixing")
+                    self.metadata_db[k]["atime"] = self.metadata_db[k]["ctime"]
+                
+                # Track oldest atime
+                if oldest_atime is None or self.metadata_db[k]["atime"] < oldest_atime:
+                    oldest_atime = self.metadata_db[k]["atime"]
+            except Exception as e:
+                self._log(f"Error processing key '{k2}': {str(e)}")
 
         l1 = len(self.val_db)
         l2 = len(self.metadata_db)
