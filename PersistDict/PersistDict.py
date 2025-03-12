@@ -83,6 +83,7 @@ class PersistDict(dict):
         Args:
             database_path (Union[str, PosixPath]): Path to the LMDB database folder. Note that this is a folder, not a file.
             expiration_days (Optional[int], default=0): Number of days after which entries expire. 0 means no expiration.
+                Note that expiration checks are only performed at initialization time, not during normal operations.
             key_serializer (Callable, default=key_to_string): Function to serialize keys before storing. If None, no serializer will be used, but this can lead to issue.
             key_unserializer (Callable, default=string_to_key): Function to deserialize keys after retrieval. If None, no unserializer will be used, but this can lead to issues.
             key_size_limit (int, default=511): Maximum size for the key. If the key is larger than this it will be hashed then cropped.
@@ -90,6 +91,7 @@ class PersistDict(dict):
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
             verbose (bool, default=False): If True, enables verbose logging.
+            expire_check_interval (int, default=3600): Check expiration every this many seconds. Only used during initialization.
         """
         self.verbose = verbose
         self._log(".__init__")
@@ -188,7 +190,9 @@ class PersistDict(dict):
             AssertionError: If `expiration_days` is not a positive integer or 0.
 
         Note:
-            This method is called internally and should not be called directly by users.
+            This method is called internally during initialization only and should not be called 
+            directly by users. Expiration checks are NOT performed automatically during normal 
+            dictionary operations.
         """
         self._log("expirating")
         if not self.expiration_days:
@@ -250,7 +254,9 @@ class PersistDict(dict):
         well as check that they all have the same keys.
 
         Note:
-            This method is called internally and should not be called directly by users.
+            This method is called internally during initialization only and should not be called 
+            directly by users. Integrity checks are NOT performed automatically during normal 
+            dictionary operations.
         """
         self._log("checking integrity of db")
         
