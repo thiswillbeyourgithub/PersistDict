@@ -161,6 +161,8 @@ class PersistDict(dict):
             self.info_db["already_called"] = False
         elif len(self.val_db) == 0:
             self.info_db["already_called"] = False
+        if "oldest_atime" not in self.info_db:
+            self.info_db["oldest_atime"] = datetime.datetime.now()
 
         # checks
         self.__integrity_check__()
@@ -195,17 +197,31 @@ class PersistDict(dict):
         try:
             assert self.expiration_days > 0, "expiration_days has to be a positive int or 0 to disable"
             expiration_date = datetime.datetime.now() - datetime.timedelta(days=self.expiration_days)
+            
+            # Skip expiration check if oldest atime is newer than expiration date
+            if "oldest_atime" in self.info_db and self.info_db["oldest_atime"] > expiration_date:
+                self._log("Skipping expiration check - oldest atime is newer than expiration date")
+                return
 
             # Get keys to expire
             keys_to_delete = []
+            oldest_atime = None
             for k in self.val_db.keys():
                 try:
-                    if self.metadata_db[k]["atime"] <= expiration_date:
+                    current_atime = self.metadata_db[k]["atime"]
+                    if oldest_atime is None or current_atime < oldest_atime:
+                        oldest_atime = current_atime
+                        
+                    if current_atime <= expiration_date:
                         keys_to_delete.append(k)
                 except KeyError:
                     # Handle case where metadata might be missing
                     self._log(f"Missing metadata for key {k}, marking for deletion")
                     keys_to_delete.append(k)
+            
+            # Update oldest_atime in info_db
+            if oldest_atime is not None:
+                self.info_db["oldest_atime"] = oldest_atime
                     
             if not keys_to_delete:
                 self._log("No keys to expire")
@@ -237,7 +253,9 @@ class PersistDict(dict):
             This method is called internally and should not be called directly by users.
         """
         self._log("checking integrity of db")
-
+        
+        oldest_atime = None
+        
         for k in self.val_db.keys():
             try:
                 k2 = self.key_unserializer(k)
@@ -249,6 +267,10 @@ class PersistDict(dict):
             assert "atime" in self.metadata_db[k], f"Item of key '{k2}' is missing atime metadata"
             assert "ctime" in self.metadata_db[k], f"Item of key '{k2}' is missing ctime metadata"
             assert self.metadata_db[k]["ctime"] <= self.metadata_db[k]["atime"], f"Item of key '{k2}' has ctime after atime"
+            
+            # Track oldest atime
+            if oldest_atime is None or self.metadata_db[k]["atime"] < oldest_atime:
+                oldest_atime = self.metadata_db[k]["atime"]
 
         l1 = len(self.val_db)
         l2 = len(self.metadata_db)
@@ -257,6 +279,13 @@ class PersistDict(dict):
         assert "version" in self.info_db, "info_db is missing the key 'version'"
         assert "ctime" in self.info_db, "info_db is missing the key 'ctime'"
         assert "already_called" in self.info_db, "info_db is missing the key 'already_called'"
+        
+        # Update oldest_atime in info_db
+        if oldest_atime is not None:
+            self.info_db["oldest_atime"] = oldest_atime
+        elif len(self.val_db) == 0:
+            # If database is empty, set oldest_atime to current time
+            self.info_db["oldest_atime"] = datetime.datetime.now()
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -303,6 +332,10 @@ class PersistDict(dict):
         self.val_db[ks] = value
         t = datetime.datetime.now()
         self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
+        
+        # Update oldest_atime if this is the first item or if current oldest_atime is None
+        if len(self.val_db) == 1 or "oldest_atime" not in self.info_db:
+            self.info_db["oldest_atime"] = t
 
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
@@ -316,6 +349,7 @@ class PersistDict(dict):
         for k in keys:
             del self.val_db[k], self.metadata_db[k]
         self.info_db["already_called"] = False
+        self.info_db["oldest_atime"] = datetime.datetime.now()
         
     def __len__(self) -> int:
         self._log("getting length")
