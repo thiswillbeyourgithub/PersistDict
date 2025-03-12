@@ -1,75 +1,101 @@
 # PersistDict
 
-Just a DIY version [sqldict](https://github.com/piskvorky/sqlitedict): looks like a dict and acts like a dict but is persistent via an [LMDB database](https://en.wikipedia.org/wiki/Lightning_Memory-Mapped_Database). Makes heavy use of [lmdb-dict](https://github.com/uchicago-dsi/lmdb-dict) behind the scenes.
+A persistent dictionary implementation backed by an [LMDB database](https://en.wikipedia.org/wiki/Lightning_Memory-Mapped_Database). PersistDict looks and acts like a Python dictionary but persists data to disk. It makes heavy use of [lmdb-dict](https://github.com/uchicago-dsi/lmdb-dict) behind the scenes.
 
 ## Why?
 
-I ran into issue with langchain's caches when developping [wdoc](https://github.com/thiswillbeyourgithub/WDoc) (my RAG lib, optimized for my use) and after months of waiting I decided to fix it myself. And instead of trusting sqldict's implementation with langchain's concurrency I made my own.
-This makes it very easy to add persistent cache to anything.
-Also it was easy to do thanks to my [BrownieCutter](https://pypi.org/project/BrownieCutter/).
-I initially made an implementation that used sqlite (with support for encryption, compression and handled concurrency via a singleton) but then I stumbled upon [lmdb-dict](https://github.com/uchicago-dsi/lmdb-dict) which is very probably way better as it's done by pros. It's based on [LMDB](https://en.wikipedia.org/wiki/LMDB) which is a more suitable for what I was after when doing PersistDict than sqlite3. If you want to use the sqlite version take a look at version before `2.0.0`.
+I ran into issues with langchain's caches when developing [wdoc](https://github.com/thiswillbeyourgithub/WDoc) (my RAG library) and after months of waiting I decided to fix it myself. Instead of trusting sqldict's implementation with langchain's concurrency, I made my own.
+
+This makes it very easy to add persistent caching to anything. I initially made an implementation that used SQLite (with support for encryption, compression and handled concurrency via a singleton), but then I discovered [lmdb-dict](https://github.com/uchicago-dsi/lmdb-dict) which is likely much better as it's developed by professionals. It's based on [LMDB](https://en.wikipedia.org/wiki/LMDB) which is more suitable for what I was after than SQLite3. If you want to use the SQLite version, check out versions before `2.0.0`.
 
 ## Features:
-- **threadsafe**: if several threads try to access the same db it won't be a
-  problem. Even if multiple other threads use also another db. And if several
-  python scripts run at the same time and try to access the same db, LMDB
-  should make them wait appropriately.
-- **atime and ctime**: each entry includes a creation time and a last access time.
-- **expiration**: won't grow too large because old keys are automatically removed after a given amount of days.
-- **cached**: Uses a `LRUCache128` from [cachetools](https://github.com/tkem/cachetools/).
-- **customizable serializer for keys and values**: This can enable encryption, compression etc... By default, keys are compressed as [lmdb has a 511 default key length](https://stackoverflow.com/questions/66456228/increase-max-key-size-lmdb-key-value-database-in-python).
-- **only one dependency needed** Only `lmdb-dict-full` is needed. If you have [beartype](https://github.com/beartype/beartype/) installed it will be used, same with [loguru](https://loguru.readthedocs.io/).
+- **Thread-safe**: All operations are protected by a reentrant lock. Multiple threads can safely access the same database without corruption.
+- **Background processing**: Integrity checks and expiration run in a background thread by default, avoiding blocking the main thread during initialization.
+- **Automatic expiration**: Old entries are automatically removed after a configurable number of days to prevent unbounded growth.
+- **Metadata tracking**: Each entry includes creation time (ctime) and last access time (atime).
+- **Caching**: Uses a `LRUCache128` from [cachetools](https://github.com/tkem/cachetools/) for better performance.
+- **Customizable serialization**: Supports custom serializers for both keys and values, enabling encryption, compression, etc.
+- **Key hashing**: Keys are hashed and cropped to handle the LMDB key size limitation (default 511 bytes).
+- **Robust error handling**: Gracefully handles serialization errors and database corruption.
+- **Minimal dependencies**: Only requires `lmdb-dict-full`. Optionally uses [beartype](https://github.com/beartype/beartype/) for type checking and [loguru](https://loguru.readthedocs.io/) for logging if available.
 
 
-## Usage:
-* Download from pypi with `pip install PersistDict`
-* Or from git:
-    * `git clone https://github.com/thiswillbeyourgithub/PersistDict`
-    * `cd PersistDict`
-    * `pip install -e .`
-    * To run tests: `cd PersistDict ; python -m pytest test_persistdict.py -v`
+## Installation:
+* From PyPI:
+  ```bash
+  pip install PersistDict
+  ```
+* From GitHub:
+  ```bash
+  git clone https://github.com/thiswillbeyourgithub/PersistDict
+  cd PersistDict
+  pip install -e .
+  ```
+* Run tests:
+  ```bash
+  cd PersistDict
+  python -m pytest tests/test_persistdict.py -v
+  ```
 
-``` python
+## Basic Usage:
+
+```python
 from PersistDict import PersistDict
 
-# create the object
+# Create a persistent dictionary
 d = PersistDict(
-    database_path=a_path,
-    # verbose=True,
-    # expiration_days=30,
+    database_path="/path/to/db",  # Path to the database directory
+    expiration_days=30,           # Optional: entries older than this will be removed
+    verbose=False,                # Optional: enable debug logging
+    background_thread=True,       # Optional: run initialization tasks in background
 )
-# then treat it like a dict:
-d["a"] = 1
 
-# You can even create it via __call__, like a dict:
-# d = d(a=1, b="b", c=str)  # this actually calls __call__ but is only
-# allowed once per PersistDict, just like a regular dict
+# Use it like a regular dictionary
+d["key"] = "value"
+print(d["key"])  # "value"
+print("key" in d)  # True
+print(len(d))  # 1
 
-# it's a child from dict
-assert isinstance(d, dict)
+# Dictionary-style initialization (only available once)
+d = d(a=1, b="string", c=[1, 2, 3])
 
-# prints like a dict
-print(d)
-# {'a': 1, 'b': 'b', 'c': str}
+# Supports standard dictionary methods
+for key in d.keys():
+    print(key)
+    
+for value in d.values():
+    print(value)
+    
+for key, value in d.items():
+    print(f"{key}: {value}")
 
-# Supports the same methods
-assert sorted(list(d.keys())) == ["a", "b", "c"], d
-assert "b" in d
-del d["b"]
-assert list(d.keys()) == ["a", "c"], d
-assert len(d) == 2, d
-assert d.__repr__() == {"a": 1, "c": str}.__repr__()
-assert d.__str__() == {"a": 1, "c": str}.__str__()
+# Delete items
+del d["a"]
 
-# supports all the same types as value as pickle (or more if you change
-# the serializer)
-d["d"] = None
+# Clear the entire dictionary
+d.clear()
+```
 
-# If you create another object pointing at the same db, they will share the
-# same cache and won't corrupt the db:
-d2 = PersistDict(
-database_path=dbp,
-verbose=True,
+## Advanced Usage:
+
+```python
+import json
+import pickle
+import dill
+
+# Custom serializers for encryption, compression, etc.
+d = PersistDict(
+    database_path="/path/to/db",
+    key_serializer=json.dumps,       # Custom key serializer
+    key_unserializer=json.loads,     # Custom key deserializer
+    value_serializer=dill.dumps,     # Custom value serializer
+    value_unserializer=dill.loads,   # Custom value deserializer
+    key_size_limit=511,              # Maximum key size before hashing
+    caching=True,                    # Enable/disable LRU caching
+    background_timeout=30,           # Maximum time for background operations
 )
-list(d.keys()) == list(d2.keys()), d2
+
+# Multiple instances can safely access the same database
+d2 = PersistDict(database_path="/path/to/db")
+assert list(d.keys()) == list(d2.keys())
 ```
