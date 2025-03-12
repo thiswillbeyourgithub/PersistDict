@@ -71,7 +71,6 @@ class PersistDict(dict):
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
         verbose: bool = False,
-        async_expire: bool = True,
         expire_check_interval: int = 3600,  # Check expiration every hour by default
         ) -> None:
         """
@@ -98,11 +97,7 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
         self.caching = caching
         self.key_size_limit = key_size_limit
-        self.async_expire = async_expire
         self.expire_check_interval = expire_check_interval
-        self._expire_lock = threading.Lock()
-        self._expire_thread = None
-        self._stop_expire_thread = threading.Event()
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
@@ -170,57 +165,9 @@ class PersistDict(dict):
         # checks
         self.__integrity_check__()
         
-        # Start expiration thread if needed
-        if self.expiration_days and self.async_expire:
-            self._start_expire_thread()
-        else:
-            # Run once synchronously if async is disabled
-            self.__expire__()
+        # Start expiration
+        self.__expire__()
 
-    def _start_expire_thread(self) -> None:
-        """
-        Start the background thread for periodic expiration checks.
-        
-        This method creates and starts a daemon thread that periodically checks
-        for expired entries and removes them from the database.
-        """
-        if self._expire_thread is not None and self._expire_thread.is_alive():
-            self._log("Expire thread already running")
-            return
-            
-        self._stop_expire_thread.clear()
-        self._expire_thread = threading.Thread(
-            target=self._expire_thread_worker,
-            daemon=True,
-            name="PersistDict-Expire"
-        )
-        self._expire_thread.start()
-        self._log(f"Started expiration thread with interval {self.expire_check_interval}s")
-        
-    def _expire_thread_worker(self) -> None:
-        """
-        Worker function for the expiration thread.
-        
-        This function runs in a separate thread and periodically calls the
-        expiration method to remove expired entries.
-        """
-        while not self._stop_expire_thread.is_set():
-            try:
-                self.__expire__()
-            except Exception as e:
-                self._log(f"Error in expiration thread: {str(e)}")
-            
-            # Sleep for the specified interval, but check periodically if we should stop
-            for _ in range(min(36, self.expire_check_interval // 10)):
-                if self._stop_expire_thread.is_set():
-                    break
-                time.sleep(10)  # Check every 10 seconds if we should stop
-            
-            # Sleep any remaining time
-            remaining = self.expire_check_interval % 10
-            if remaining > 0 and not self._stop_expire_thread.is_set():
-                time.sleep(remaining)
-                
     def __expire__(self) -> None:
         """
         Remove elements from the database that have not been accessed within the expiration period.
@@ -243,11 +190,6 @@ class PersistDict(dict):
         """
         self._log("expirating")
         if not self.expiration_days:
-            return
-            
-        # Use a lock to prevent multiple expiration processes running simultaneously
-        if not self._expire_lock.acquire(blocking=False):
-            self._log("Another expiration process is already running")
             return
             
         try:
@@ -282,8 +224,6 @@ class PersistDict(dict):
             self._log(f"Expiration removed {len(keys_to_delete)} keys, remaining: {len(self.val_db)}")
         except Exception as e:
             self._log(f"Error during expiration: {str(e)}")
-        finally:
-            self._expire_lock.release()
 
     def __integrity_check__(self) -> None:
         """
@@ -377,18 +317,6 @@ class PersistDict(dict):
             del self.val_db[k], self.metadata_db[k]
         self.info_db["already_called"] = False
         
-    def stop_expire_thread(self) -> None:
-        """
-        Stop the background expiration thread if it's running.
-        
-        This method should be called when the PersistDict instance is no longer needed
-        to ensure clean shutdown of background threads.
-        """
-        if self._expire_thread and self._expire_thread.is_alive():
-            self._log("Stopping expiration thread")
-            self._stop_expire_thread.set()
-            # Don't join here as it might block indefinitely
-
     def __len__(self) -> int:
         self._log("getting length")
         return len(self.val_db)
@@ -397,12 +325,6 @@ class PersistDict(dict):
         self._log(f"checking if val_db contains key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
         return ks in self.val_db.keys()
-
-    def __del__(self) -> None:
-        """
-        Clean up resources when the object is garbage collected.
-        """
-        self.stop_expire_thread()
         
     def __repr__(self) -> str:
         return {k: v for k, v in self.items()}.__repr__()
