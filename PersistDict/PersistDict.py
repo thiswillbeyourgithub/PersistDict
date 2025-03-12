@@ -5,6 +5,7 @@ import os
 import threading
 import concurrent.futures
 import time
+import functools
 from lmdb_dict import SafeLmdbDict
 from lmdb_dict.cache import LRUCache128, DummyCache
 from lmdb_dict.mapping.abc import LmdbDict
@@ -56,6 +57,17 @@ def dummy_value_unserializer(inp):
         return inp.decode()
     return inp
 
+def thread_safe(method):
+    """
+    Decorator to ensure thread safety for PersistDict methods.
+    Acquires the lock before executing the method and releases it afterward.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
 @typechecker
 class PersistDict(dict):
     __VERSION__: str = "0.2.5"
@@ -71,7 +83,6 @@ class PersistDict(dict):
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
         verbose: bool = False,
-        expire_check_interval: int = 3600,  # Check expiration every hour by default
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -91,7 +102,6 @@ class PersistDict(dict):
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
             verbose (bool, default=False): If True, enables verbose logging.
-            expire_check_interval (int, default=3600): Check expiration every this many seconds. Only used during initialization.
         """
         self.verbose = verbose
         self._log(".__init__")
@@ -99,7 +109,11 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
         self.caching = caching
         self.key_size_limit = key_size_limit
-        self.expire_check_interval = expire_check_interval
+        
+        # Thread safety
+        self._lock = threading.RLock()
+        self._bg_thread = None
+        self._stop_event = threading.Event()
 
         if key_serializer is None or key_unserializer is None:
             assert key_serializer is None and key_unserializer is None, "If key_unserializer or key_serializer is None, the other one must be None too"
@@ -166,11 +180,56 @@ class PersistDict(dict):
         if "oldest_atime" not in self.info_db:
             self.info_db["oldest_atime"] = datetime.datetime.now()
 
-        # checks
-        self.__integrity_check__()
-        
-        # Start expiration
-        self.__expire__()
+        # Start background thread for integrity check and expiration
+        self._start_background_thread()
+
+    def _start_background_thread(self) -> None:
+        """
+        Start a background thread for integrity check and expiration.
+        """
+        self._log("Starting background thread for integrity check and expiration")
+        self._stop_event.clear()
+        self._bg_thread = threading.Thread(
+            target=self._background_task,
+            daemon=True,
+            name="PersistDict-BgThread"
+        )
+        self._bg_thread.start()
+    
+    def _background_task(self) -> None:
+        """
+        Background task that performs integrity check and expiration once.
+        The thread terminates after completing these tasks.
+        """
+        try:
+            # Run integrity check
+            self._log("Background thread running integrity check")
+            self.__integrity_check__()
+            
+            # Run expiration
+            self._log("Background thread running expiration")
+            self.__expire__()
+            
+            self._log("Background thread completed tasks and terminating")
+        except Exception as e:
+            self._log(f"Error in background thread: {str(e)}")
+    
+    def __del__(self) -> None:
+        """
+        Clean up resources when the object is garbage collected.
+        """
+        self._stop_background_thread()
+    
+    def _stop_background_thread(self) -> None:
+        """
+        Stop the background thread if it's running.
+        """
+        if self._bg_thread and self._bg_thread.is_alive():
+            self._log("Stopping background thread")
+            self._stop_event.set()
+            if threading.current_thread() != self._bg_thread:
+                self._bg_thread.join(timeout=5)  # Wait up to 5 seconds
+            self._bg_thread = None
 
     def __expire__(self) -> None:
         """
@@ -245,6 +304,7 @@ class PersistDict(dict):
         except Exception as e:
             self._log(f"Error during expiration: {str(e)}")
 
+    @thread_safe
     def __integrity_check__(self) -> None:
         """
         Perform an integrity check on the database.
@@ -297,6 +357,7 @@ class PersistDict(dict):
         if self.verbose:
             debug("PersistDict:" + message)
 
+    @thread_safe
     def __call__(self, *args, **kwargs):
         """ only available at instantiation time, to make it more dict-like.
         For example:
@@ -322,6 +383,7 @@ class PersistDict(dict):
 
         return self
 
+    @thread_safe
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -330,6 +392,7 @@ class PersistDict(dict):
         self.metadata_db[ks]["atime"] = datetime.datetime.now()
         return val
 
+    @thread_safe
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -343,12 +406,14 @@ class PersistDict(dict):
         if len(self.val_db) == 1 or "oldest_atime" not in self.info_db:
             self.info_db["oldest_atime"] = t
 
+    @thread_safe
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
         assert self.metadata_db[ks]["fullkey"].startswith(key)
         del self.val_db[ks], self.metadata_db[ks]
 
+    @thread_safe
     def clear(self) -> None:
         self._log("Clearing database")
         keys = list(self.val_db.keys())
@@ -357,10 +422,12 @@ class PersistDict(dict):
         self.info_db["already_called"] = False
         self.info_db["oldest_atime"] = datetime.datetime.now()
         
+    @thread_safe
     def __len__(self) -> int:
         self._log("getting length")
         return len(self.val_db)
 
+    @thread_safe
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -372,6 +439,7 @@ class PersistDict(dict):
     def __str__(self) -> str:
         return {k: v for k, v in self.items()}.__str__()
 
+    @thread_safe
     def keys(self) -> Generator[str, None, None]:
         "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
@@ -384,12 +452,14 @@ class PersistDict(dict):
         for k in output:
             yield k
 
+    @thread_safe
     def values(self) -> Generator[Any, None, None]:
         "get the list of values present in the db"
         self._log("getting values")
         for k in self.keys():
             yield self[k]
 
+    @thread_safe
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
         for k in self.keys():
