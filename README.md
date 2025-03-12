@@ -27,7 +27,7 @@ I initially made an implementation that used sqlite (with support for encryption
     * `git clone https://github.com/thiswillbeyourgithub/PersistDict`
     * `cd PersistDict`
     * `pip install -e .`
-    * To run tests: `cd PersistDict ; python -m pytest test.py`
+    * To run tests: `cd PersistDict ; python -m pytest test_persistdict.py -v`
 
 ``` python
 from PersistDict import PersistDict
