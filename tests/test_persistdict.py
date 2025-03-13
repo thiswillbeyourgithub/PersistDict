@@ -444,6 +444,49 @@ def test_concurrent_operations(clean_db):
     assert successful_ops == expected_ops, f"{successful_ops} successful operations out of {expected_ops} ({ratio:.2f}%)"
 
 
+def test_logging_control(clean_db, monkeypatch):
+    """Test that the PERSIST_DICT_TEST_LOG environment variable controls logging behavior."""
+    import os
+    import io
+    import sys
+    from contextlib import redirect_stdout
+    
+    # Capture stdout to check logging output
+    f = io.StringIO()
+    
+    # Test with PERSIST_DICT_TEST_LOG=False (default)
+    monkeypatch.setenv('PERSIST_DICT_TEST_LOG', 'false')
+    
+    # Create a new instance to reload the environment variable
+    with redirect_stdout(f):
+        inst = PersistDict(
+            database_path=clean_db,
+            verbose=True
+        )
+        inst.clear()  # This is not routine and should be logged
+        inst["key1"] = "value1"  # This is routine and should not be logged
+        _ = inst["key1"]  # This is routine and should not be logged
+    
+    output = f.getvalue()
+    assert "Clearing database" in output, "Important operations should be logged"
+    assert "setting item at key key1" not in output, "Routine operations should not be logged when PERSIST_DICT_TEST_LOG is false"
+    
+    # Test with PERSIST_DICT_TEST_LOG=True
+    f = io.StringIO()
+    monkeypatch.setenv('PERSIST_DICT_TEST_LOG', 'true')
+    
+    # Create a new instance to reload the environment variable
+    with redirect_stdout(f):
+        inst = PersistDict(
+            database_path=clean_db,
+            verbose=True
+        )
+        inst["key2"] = "value2"  # This is routine but should be logged now
+    
+    output = f.getvalue()
+    assert "setting item at key key2" in output, "Routine operations should be logged when PERSIST_DICT_TEST_LOG is true"
+
+
 def test_hash_and_crop(clean_db):
     """Test the hash_and_crop method with different key_size_limit values."""
     # Create instance with default key_size_limit

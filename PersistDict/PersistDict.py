@@ -14,9 +14,9 @@ import pickle
 import datetime
 from pathlib import Path, PosixPath
 try:
-    from beartype.typing import Union, Any, Optional, Tuple, Generator, Callable
+    from beartype.typing import Union, Any, Optional, Tuple, Generator, Callable, Dict
 except Exception:
-    from typing import Union, Any, Optional, Tuple, Generator, Callable
+    from typing import Union, Any, Optional, Tuple, Generator, Callable, Dict
 
 # only use those libs if present:
 try:
@@ -24,6 +24,9 @@ try:
 except ImportError:
     def typechecker(func: Callable) -> Callable:
         return func
+
+# Get environment variable for test logging
+PERSIST_DICT_TEST_LOG = os.environ.get('PERSIST_DICT_TEST_LOG', '').lower() in ('true', '1', 'yes')
 
 try:
     from loguru import logger
@@ -536,9 +539,27 @@ class PersistDict(dict):
             self.info_db["oldest_atime"] = datetime.datetime.now()
 
     def _log(self, message: str) -> None:
+        # Only log if verbose is True and either:
+        # 1. PERSIST_DICT_TEST_LOG is True, or
+        # 2. The message is important (not a routine operation)
         if self.verbose:
-            name_prefix = f"[{self.name}]" if self.name else ""
-            debug(f"PersistDict{name_prefix}:" + message)
+            # Check if this is a routine operation message
+            routine_operations = [
+                "getting item at key", 
+                "setting item at key",
+                "getting length",
+                "checking if val_db contains key",
+                "getting keys",
+                "getting values",
+                "getting items"
+            ]
+            
+            is_routine = any(message.startswith(op) for op in routine_operations)
+            
+            # Only log routine operations if PERSIST_DICT_TEST_LOG is True
+            if PERSIST_DICT_TEST_LOG or not is_routine:
+                name_prefix = f"[{self.name}]" if self.name else ""
+                debug(f"PersistDict{name_prefix}:" + message)
 
     @thread_safe
     def __call__(self, *args, **kwargs):
