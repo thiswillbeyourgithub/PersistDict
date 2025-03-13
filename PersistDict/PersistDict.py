@@ -86,6 +86,7 @@ class PersistDict(dict):
         verbose: bool = False,
         background_thread: bool = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
+        name: str = "",  # Name identifier for logging purposes
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -108,8 +109,11 @@ class PersistDict(dict):
             background_thread (bool, default=True): If True, runs integrity check and expiration in a background thread.
                 If False, these operations run in the current thread during initialization. Set to False for better
                 determinism or in environments where threading is problematic.
+            name (str, default=""): Optional name identifier for the PersistDict instance. Used in logging messages
+                to identify which PersistDict instance is generating the logs when multiple instances exist.
         """
         self.verbose = verbose
+        self.name = name
         self._log(".__init__")
         self.expiration_days = expiration_days
         self.database_path = Path(database_path)
@@ -519,7 +523,8 @@ class PersistDict(dict):
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            debug("PersistDict:" + message)
+            name_prefix = f"[{self.name}]" if self.name else ""
+            debug(f"PersistDict{name_prefix}:" + message)
 
     @thread_safe
     def __call__(self, *args, **kwargs):
