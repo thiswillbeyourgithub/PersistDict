@@ -25,8 +25,7 @@ except ImportError:
     def typechecker(func: Callable) -> Callable:
         return func
 
-# Get environment variable for test logging
-PERSIST_DICT_TEST_LOG = os.environ.get('PERSIST_DICT_TEST_LOG', '').lower() in ('true', '1', 'yes')
+# We'll check the environment variable dynamically in the _log method
 
 try:
     from loguru import logger
@@ -556,8 +555,11 @@ class PersistDict(dict):
             
             is_routine = any(op in message for op in routine_operations)
             
+            # Check environment variable dynamically each time
+            persist_dict_test_log = os.environ.get('PERSIST_DICT_TEST_LOG', '').lower() in ('true', '1', 'yes')
+            
             # Only log routine operations if PERSIST_DICT_TEST_LOG is True
-            if PERSIST_DICT_TEST_LOG or not is_routine:
+            if persist_dict_test_log or not is_routine:
                 name_prefix = f"[{self.name}]" if self.name else ""
                 log_message = f"PersistDict{name_prefix}: {message}"
                 
