@@ -287,12 +287,13 @@ def test_default_name(clean_db):
 
 def test_background_timeout(clean_db):
     """Test PersistDict background_timeout parameter."""
-    # Create instance with custom background_timeout
+    # Create instance with custom background_timeout and disabled background thread
     custom_timeout = 60
     inst = PersistDict(
         database_path=clean_db,
         verbose=True,
-        background_timeout=custom_timeout
+        background_timeout=custom_timeout,
+        background_thread="disabled"  # Disable background thread to avoid hanging
     )
     
     # Verify timeout is set correctly
@@ -302,11 +303,16 @@ def test_background_timeout(clean_db):
     min_inst = PersistDict(
         database_path=clean_db,
         verbose=True,
-        background_timeout=1  # Less than minimum (5)
+        background_timeout=1,  # Less than minimum (5)
+        background_thread="disabled"  # Disable background thread to avoid hanging
     )
     
     # Should enforce minimum of 5
     assert min_inst.background_timeout >= 5
+    
+    # Clean up
+    inst._stop_background_thread()
+    min_inst._stop_background_thread()
 
 
 def test_thread_safety(clean_db):
