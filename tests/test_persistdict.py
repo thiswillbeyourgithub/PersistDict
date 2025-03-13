@@ -218,30 +218,26 @@ def test_background_thread_enabled(clean_db):
     assert inst._bg_thread is None
 
 
-def test_minimal_locking(clean_db):
-    """Test PersistDict with minimal locking enabled and disabled."""
-    # Test with minimal_locking=True (default)
-    inst1 = PersistDict(
+def test_thread_safety(clean_db):
+    """Test basic thread safety of PersistDict operations."""
+    # Create instance
+    inst = PersistDict(
         database_path=clean_db,
-        verbose=True,
-        minimal_locking=True
+        verbose=True
     )
-    assert inst1.minimal_locking is True
     
     # Add and retrieve data
-    inst1["key1"] = "value1"
-    assert inst1["key1"] == "value1"
-    assert len(inst1) == 1
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
     
-    # Clear and recreate with minimal_locking=False
-    inst1.clear()
+    # Clear and recreate
+    inst.clear()
     
     inst2 = PersistDict(
         database_path=clean_db,
-        verbose=True,
-        minimal_locking=False
+        verbose=True
     )
-    assert inst2.minimal_locking is False
     
     # Add and retrieve data
     inst2["key2"] = "value2"
@@ -374,78 +370,77 @@ def test_thread_safety(clean_db):
                 assert inst[key] == expected_value
 
 
-def test_minimal_locking_comparison(clean_db):
-    """Test that both minimal_locking=True and False work correctly under load."""
+def test_concurrent_operations(clean_db):
+    """Test that PersistDict works correctly under concurrent load."""
     import threading
     import time
     import random
     
-    # Test with both locking modes
-    for minimal_locking in [True, False]:
-        # Create instance with specified locking mode
-        inst = PersistDict(
-            database_path=clean_db,
-            verbose=True,
-            minimal_locking=minimal_locking
-        )
-        inst.clear()
-        
-        # Number of operations per thread
-        num_ops = 100
-        # Number of threads
-        num_threads = 8
-        
-        # Shared counter to track operations
-        successful_ops = 0
-        lock = threading.Lock()
-        
-        # Function to run in threads
-        def thread_func():
-            nonlocal successful_ops
-            for i in range(num_ops):
-                try:
-                    # Use same keys across threads to increase contention
-                    key = f"shared_key_{i % 10}"
-                    value = f"value_{threading.get_ident()}_{i}"
-                    
-                    # Randomly choose an operation with higher write probability
-                    op = random.choice(["set", "set", "get", "contains", "len", "del"])
-                    
-                    if op == "set":
-                        inst[key] = value
-                    elif op == "get":
-                        if key in inst:
-                            _ = inst[key]
-                    elif op == "contains":
-                        _ = key in inst
-                    elif op == "len":
-                        _ = len(inst)
-                    elif op == "del":
-                        if key in inst:
-                            del inst[key]
-                    
-                    # Small sleep to increase chance of thread interleaving
-                    time.sleep(0.001)
-                    
-                    with lock:
-                        successful_ops += 1
-                except Exception as e:
-                    print(f"Error in thread {threading.get_ident()}: {e}")
-        
-        # Create and start threads
-        threads = []
-        for _ in range(num_threads):
-            t = threading.Thread(target=thread_func)
-            threads.append(t)
-            t.start()
-        
-        # Wait for all threads to complete
-        for t in threads:
-            t.join()
-        
-        # Verify all operations completed successfully
-        expected_ops = num_threads * num_ops
-        assert successful_ops == expected_ops, f"With minimal_locking={minimal_locking}: {successful_ops} successful operations out of {expected_ops}"
+    # Create instance
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True
+    )
+    inst.clear()
+    
+    # Number of operations per thread
+    num_ops = 300
+    # Number of threads
+    num_threads = 8
+    
+    # Shared counter to track operations
+    successful_ops = 0
+    lock = threading.Lock()
+    
+    # Function to run in threads
+    def thread_func():
+        nonlocal successful_ops
+        for i in range(num_ops):
+            try:
+                # Use same keys across threads to increase contention
+                key = f"shared_key_{i % 10}"
+                value = f"value_{threading.get_ident()}_{i}"
+                
+                # Randomly choose an operation with higher write probability
+                op = random.choice(["set", "set", "get", "get", "contains", "len", "del"])
+                
+                if op == "set":
+                    inst[key] = value
+                elif op == "get":
+                    if key in inst:
+                        _ = inst[key]
+                elif op == "contains":
+                    _ = key in inst
+                elif op == "len":
+                    _ = len(inst)
+                elif op == "del":
+                    if key in inst:
+                        del inst[key]
+                
+                # Small sleep to increase chance of thread interleaving
+                time.sleep(0.001)
+                
+                with lock:
+                    successful_ops += 1
+            except Exception as e:
+                print(f"Error in thread {threading.get_ident()}: {e}")
+    
+    # Create and start threads
+    threads = []
+    for _ in range(num_threads):
+        t = threading.Thread(target=thread_func)
+        threads.append(t)
+        t.start()
+    
+    # Wait for all threads to complete
+    for t in threads:
+        t.join()
+    time.sleep(1)
+    
+    # Verify all operations completed successfully
+    expected_ops = num_threads * num_ops
+    ratio = successful_ops / expected_ops * 100
+    assert successful_ops == expected_ops, f"{successful_ops} successful operations out of {expected_ops} ({ratio:.2f}%)"
 
 
 def test_hash_and_crop(clean_db):
