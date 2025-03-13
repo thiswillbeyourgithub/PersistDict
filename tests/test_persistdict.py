@@ -146,3 +146,218 @@ def test_expiration_and_serialization(clean_db):
     assert len(inst) == 1
     inst.__expire__()
     assert len(inst) == 0
+
+
+def test_background_thread_disabled(clean_db):
+    """Test PersistDict with background thread disabled."""
+    # Create instance with background_thread="disabled"
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        background_thread="disabled"
+    )
+    
+    # Verify that background thread attributes are properly set
+    assert inst.background_thread == "disabled"
+    assert inst._bg_thread is None
+    
+    # Add some data and verify it works normally
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
+
+
+def test_background_thread_foreground(clean_db):
+    """Test PersistDict with background tasks running in foreground."""
+    # Create instance with background_thread=False (runs in current thread)
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        background_thread=False
+    )
+    
+    # Verify that background thread attributes are properly set
+    assert inst.background_thread is False
+    assert inst._bg_thread is None
+    
+    # Add some data and verify it works normally
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
+
+
+def test_background_thread_enabled(clean_db):
+    """Test PersistDict with background thread enabled."""
+    # Create instance with background_thread=True
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        background_thread=True,
+        background_timeout=5
+    )
+    
+    # Verify that background thread attributes are properly set
+    assert inst.background_thread is True
+    
+    # Wait for background thread to complete
+    if inst._bg_thread and inst._bg_thread.is_alive():
+        inst._bg_task_complete.wait(timeout=10)
+    
+    # Add some data and verify it works normally
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
+    
+    # Test cleanup
+    inst._stop_background_thread()
+    assert inst._bg_thread is None
+
+
+def test_minimal_locking(clean_db):
+    """Test PersistDict with minimal locking enabled and disabled."""
+    # Test with minimal_locking=True (default)
+    inst1 = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        minimal_locking=True
+    )
+    assert inst1.minimal_locking is True
+    
+    # Add and retrieve data
+    inst1["key1"] = "value1"
+    assert inst1["key1"] == "value1"
+    assert len(inst1) == 1
+    
+    # Clear and recreate with minimal_locking=False
+    inst1.clear()
+    
+    inst2 = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        minimal_locking=False
+    )
+    assert inst2.minimal_locking is False
+    
+    # Add and retrieve data
+    inst2["key2"] = "value2"
+    assert inst2["key2"] == "value2"
+    assert len(inst2) == 1
+
+
+def test_custom_name(clean_db):
+    """Test PersistDict with custom name identifier."""
+    # Create instance with custom name
+    custom_name = "TestDictInstance"
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        name=custom_name
+    )
+    
+    # Verify name is set correctly
+    assert inst.name == custom_name
+    
+    # Add some data and verify it works normally
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
+
+
+def test_default_name(clean_db):
+    """Test PersistDict with default name (database path name)."""
+    # Create instance without specifying name
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True
+    )
+    
+    # Verify name defaults to database path name
+    assert inst.name == clean_db.name
+    
+    # Add some data and verify it works normally
+    inst["key1"] = "value1"
+    assert inst["key1"] == "value1"
+    assert len(inst) == 1
+
+
+def test_background_timeout(clean_db):
+    """Test PersistDict background_timeout parameter."""
+    # Create instance with custom background_timeout
+    custom_timeout = 60
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        background_timeout=custom_timeout
+    )
+    
+    # Verify timeout is set correctly
+    assert inst.background_timeout == custom_timeout
+    
+    # Test with minimum timeout enforcement
+    min_inst = PersistDict(
+        database_path=clean_db,
+        verbose=True,
+        background_timeout=1  # Less than minimum (5)
+    )
+    
+    # Should enforce minimum of 5
+    assert min_inst.background_timeout >= 5
+
+
+def test_thread_safety(clean_db):
+    """Test thread safety of PersistDict operations."""
+    import threading
+    import random
+    
+    # Create instance
+    inst = PersistDict(
+        database_path=clean_db,
+        verbose=True
+    )
+    
+    # Number of operations per thread
+    num_ops = 50
+    # Number of threads
+    num_threads = 5
+    
+    # Function to run in threads
+    def thread_func(thread_id):
+        for i in range(num_ops):
+            key = f"key_{thread_id}_{i}"
+            value = f"value_{thread_id}_{i}"
+            
+            # Randomly choose an operation
+            op = random.choice(["set", "get", "contains", "len"])
+            
+            if op == "set":
+                inst[key] = value
+            elif op == "get":
+                # Only try to get if we've set it
+                if i > 0:
+                    prev_key = f"key_{thread_id}_{i-1}"
+                    if prev_key in inst:
+                        _ = inst[prev_key]
+            elif op == "contains":
+                _ = key in inst
+            elif op == "len":
+                _ = len(inst)
+    
+    # Create and start threads
+    threads = []
+    for i in range(num_threads):
+        t = threading.Thread(target=thread_func, args=(i,))
+        threads.append(t)
+        t.start()
+    
+    # Wait for all threads to complete
+    for t in threads:
+        t.join()
+    
+    # Verify data integrity
+    for thread_id in range(num_threads):
+        for i in range(num_ops):
+            key = f"key_{thread_id}_{i}"
+            expected_value = f"value_{thread_id}_{i}"
+            
+            if key in inst:
+                assert inst[key] == expected_value
