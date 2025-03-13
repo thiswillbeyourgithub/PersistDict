@@ -416,6 +416,7 @@ def test_concurrent_operations(clean_db):
                 elif op == "del":
                     if key in inst:
                         del inst[key]
+                        inst[key] = value
                 
                 # Small sleep to increase chance of thread interleaving
                 time.sleep(0.001)
@@ -423,7 +424,7 @@ def test_concurrent_operations(clean_db):
                 with lock:
                     successful_ops += 1
             except Exception as e:
-                print(f"Error in thread {threading.get_ident()}: {e}")
+                print(f"Error in thread {threading.get_ident()} op {op}: {e}")
     
     # Create and start threads
     threads = []
