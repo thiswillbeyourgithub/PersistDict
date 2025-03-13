@@ -100,7 +100,7 @@ class PersistDict(dict):
         background_thread: bool = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
         name: str = "",  # Name identifier for logging purposes
-        minimal_locking: bool = False,  # Reduce locking for better performance
+        minimal_locking: bool = True,  # Reduce locking for better performance
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -125,10 +125,10 @@ class PersistDict(dict):
                 determinism or in environments where threading is problematic.
             name (str, default=""): Optional name identifier for the PersistDict instance. Used in logging messages
                 to identify which PersistDict instance is generating the logs when multiple instances exist.
-            minimal_locking (bool, default=False): If True, reduces the use of locks for better performance.
+            minimal_locking (bool, default=True): If True, reduces the use of locks for better performance.
                 Since LMDB is already thread-safe, this only uses locks for operations that modify Python objects.
-                Enable this for better performance in multi-threaded environments, but be aware that some
-                race conditions might still occur with Python-level operations.
+                Enabled by default for better performance in multi-threaded environments. Set to False for
+                maximum thread safety if you're concerned about potential race conditions with Python-level operations.
         """
         self.verbose = verbose
         self.name = name
@@ -624,9 +624,11 @@ class PersistDict(dict):
         ks = self.key_serializer(self.hash_and_crop(key))
         return ks in self.val_db.keys()
         
+    @no_lock_needed
     def __repr__(self) -> str:
         return {k: v for k, v in self.items()}.__repr__()
 
+    @no_lock_needed
     def __str__(self) -> str:
         return {k: v for k, v in self.items()}.__str__()
 
@@ -659,6 +661,7 @@ class PersistDict(dict):
         for k in self.keys():
             yield k, self[k]
 
+    @no_lock_needed
     def hash_and_crop(self, string):
         """Hash a string with SHA256 and crop to desired length (default 16 chars)"""
         return hashlib.sha256(string.encode('utf-8')).hexdigest()[:self.key_size_limit]
