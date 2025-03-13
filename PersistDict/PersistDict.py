@@ -611,19 +611,41 @@ class PersistDict(dict):
         self._log(f"getting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
         val = self.val_db[ks]
-        assert self.metadata_db[ks]["fullkey"].startswith(key)
-        self.metadata_db[ks]["atime"] = datetime.datetime.now()
-        return val
+        
+        # Check if this key is in the fullkey (either exact match or part of a collision list)
+        fullkey = self.metadata_db[ks]["fullkey"]
+        if fullkey == key or key in fullkey.split("||"):
+            self.metadata_db[ks]["atime"] = datetime.datetime.now()
+            return val
+        else:
+            raise KeyError(f"Key '{key}' not found")
 
     @thread_safe
     def __setitem__(self, key: str, value: Any) -> None:
         self._log(f"setting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
         if ks in self.val_db:
-            assert self.metadata_db[ks]["fullkey"].startswith(key), f"Collision for key '{key}'"
+            # Check if this is a collision or an update to an existing key
+            if self.metadata_db[ks]["fullkey"] != key:
+                self._log(f"Hash collision detected for keys '{key}' and '{self.metadata_db[ks]['fullkey']}'")
+                # Handle collision by appending the key to the existing fullkey with a separator
+                # This allows us to track both keys that hash to the same value
+                if not self.metadata_db[ks]["fullkey"].startswith(key):
+                    self.metadata_db[ks]["fullkey"] = f"{key}||{self.metadata_db[ks]['fullkey']}"
+            # else: it's an update to an existing key, no special handling needed
+        
         self.val_db[ks] = value
         t = datetime.datetime.now()
-        self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
+        
+        # Create or update metadata
+        if ks not in self.metadata_db:
+            self.metadata_db[ks] = {"ctime": t, "atime": t, "fullkey": key}
+        else:
+            # Update access time but preserve creation time and fullkey
+            self.metadata_db[ks]["atime"] = t
+            # Make sure the key is in the fullkey
+            if key not in self.metadata_db[ks]["fullkey"]:
+                self.metadata_db[ks]["fullkey"] = f"{key}||{self.metadata_db[ks]['fullkey']}"
         
         # Update oldest_atime if this is the first item or if current oldest_atime is None
         if len(self.val_db) == 1 or "oldest_atime" not in self.info_db:
@@ -633,8 +655,32 @@ class PersistDict(dict):
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
-        assert self.metadata_db[ks]["fullkey"].startswith(key)
-        del self.val_db[ks], self.metadata_db[ks]
+        
+        if ks not in self.val_db:
+            raise KeyError(key)
+            
+        fullkey = self.metadata_db[ks]["fullkey"]
+        
+        # If this is the only key or an exact match, delete everything
+        if fullkey == key:
+            del self.val_db[ks], self.metadata_db[ks]
+        # If this is one of multiple collided keys
+        elif "||" in fullkey:
+            keys = fullkey.split("||")
+            if key in keys:
+                # Remove this key from the collision list
+                keys.remove(key)
+                # If there are still other keys, update the fullkey
+                if keys:
+                    self.metadata_db[ks]["fullkey"] = "||".join(keys)
+                else:
+                    # If no keys left, delete everything
+                    del self.val_db[ks], self.metadata_db[ks]
+            else:
+                raise KeyError(key)
+        else:
+            # Key doesn't match and no collision list
+            raise KeyError(key)
 
     @thread_safe
     def clear(self) -> None:
@@ -656,7 +702,14 @@ class PersistDict(dict):
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
-        return ks in self.val_db.keys()
+        
+        # First check if the hash exists
+        if ks not in self.val_db:
+            return False
+            
+        # Then check if this specific key is in the fullkey
+        fullkey = self.metadata_db[ks]["fullkey"]
+        return fullkey == key or key in fullkey.split("||")
         
     @no_lock_needed
     def __repr__(self) -> str:
@@ -672,12 +725,27 @@ class PersistDict(dict):
         "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
         all_keys = list(self.val_db.keys())
-        all_fullkeys = {k: self.metadata_db[k]["fullkey"] for k in all_keys}
-        all_ctime = {k: self.metadata_db[k]["ctime"] for k in all_keys}
-
-        all_keys = sorted(all_keys, key=lambda k: all_ctime[k])
-        output = [all_fullkeys[k] for k in all_keys]
-        for k in output:
+        all_fullkeys = {}
+        all_ctime = {}
+        
+        # Process fullkeys to handle collisions
+        for k in all_keys:
+            fullkey = self.metadata_db[k]["fullkey"]
+            ctime = self.metadata_db[k]["ctime"]
+            
+            # Handle collision case where multiple keys map to the same hash
+            if "||" in fullkey:
+                for individual_key in fullkey.split("||"):
+                    all_fullkeys[individual_key] = k  # Map each key to its hash
+                    all_ctime[individual_key] = ctime  # Use same ctime for all collided keys
+            else:
+                all_fullkeys[fullkey] = k
+                all_ctime[fullkey] = ctime
+        
+        # Sort by creation time
+        sorted_keys = sorted(all_fullkeys.keys(), key=lambda k: all_ctime[k])
+        
+        for k in sorted_keys:
             yield k
 
     @thread_safe
