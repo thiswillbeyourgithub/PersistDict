@@ -64,13 +64,32 @@ def thread_safe(method):
     Acquires the lock before executing the method and releases it afterward.
     If minimal_locking is enabled, this will only use locks for methods that
     modify Python objects, not for operations that only interact with LMDB.
+    
+    Logs a warning if lock acquisition takes longer than a threshold, indicating contention.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if self.minimal_locking and getattr(method, '_no_lock_needed', False):
             return method(self, *args, **kwargs)
-        with self._lock:
+        
+        # Try to acquire the lock with a timeout
+        lock_start_time = time.time()
+        lock_timeout = 0.5  # seconds - adjust as needed
+        lock_acquired = self._lock.acquire(timeout=lock_timeout)
+        
+        if not lock_acquired:
+            # Lock acquisition timed out - this indicates contention
+            wait_time = time.time() - lock_start_time
+            self._log(f"LOCK CONTENTION: Waited {wait_time:.3f}s for lock in {method.__name__}, still waiting...")
+            # Now wait indefinitely for the lock
+            self._lock.acquire()
+            total_wait = time.time() - lock_start_time
+            self._log(f"LOCK CONTENTION RESOLVED: Finally acquired lock after {total_wait:.3f}s in {method.__name__}")
+        
+        try:
             return method(self, *args, **kwargs)
+        finally:
+            self._lock.release()
     return wrapper
 
 def no_lock_needed(method):
