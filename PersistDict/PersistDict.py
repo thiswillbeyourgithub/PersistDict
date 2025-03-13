@@ -62,12 +62,25 @@ def thread_safe(method):
     """
     Decorator to ensure thread safety for PersistDict methods.
     Acquires the lock before executing the method and releases it afterward.
+    If minimal_locking is enabled, this will only use locks for methods that
+    modify Python objects, not for operations that only interact with LMDB.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
+        if self.minimal_locking and getattr(method, '_no_lock_needed', False):
+            return method(self, *args, **kwargs)
         with self._lock:
             return method(self, *args, **kwargs)
     return wrapper
+
+def no_lock_needed(method):
+    """
+    Marker decorator to indicate methods that don't need locking
+    when minimal_locking is enabled because they only interact with
+    thread-safe LMDB operations.
+    """
+    method._no_lock_needed = True
+    return method
 
 @typechecker
 class PersistDict(dict):
@@ -87,6 +100,7 @@ class PersistDict(dict):
         background_thread: bool = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
         name: str = "",  # Name identifier for logging purposes
+        minimal_locking: bool = False,  # Reduce locking for better performance
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -111,6 +125,10 @@ class PersistDict(dict):
                 determinism or in environments where threading is problematic.
             name (str, default=""): Optional name identifier for the PersistDict instance. Used in logging messages
                 to identify which PersistDict instance is generating the logs when multiple instances exist.
+            minimal_locking (bool, default=False): If True, reduces the use of locks for better performance.
+                Since LMDB is already thread-safe, this only uses locks for operations that modify Python objects.
+                Enable this for better performance in multi-threaded environments, but be aware that some
+                race conditions might still occur with Python-level operations.
         """
         self.verbose = verbose
         self.name = name
@@ -121,6 +139,7 @@ class PersistDict(dict):
         self.key_size_limit = key_size_limit
         self.background_thread = background_thread
         self.background_timeout = max(5, background_timeout)  # Ensure minimum timeout
+        self.minimal_locking = minimal_locking
         
         # Thread safety
         self._lock = threading.RLock()
@@ -553,6 +572,7 @@ class PersistDict(dict):
         return self
 
     @thread_safe
+    @no_lock_needed
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -592,11 +612,13 @@ class PersistDict(dict):
         self.info_db["oldest_atime"] = datetime.datetime.now()
         
     @thread_safe
+    @no_lock_needed
     def __len__(self) -> int:
         self._log("getting length")
         return len(self.val_db)
 
     @thread_safe
+    @no_lock_needed
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -609,6 +631,7 @@ class PersistDict(dict):
         return {k: v for k, v in self.items()}.__str__()
 
     @thread_safe
+    @no_lock_needed
     def keys(self) -> Generator[str, None, None]:
         "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
@@ -622,6 +645,7 @@ class PersistDict(dict):
             yield k
 
     @thread_safe
+    @no_lock_needed
     def values(self) -> Generator[Any, None, None]:
         "get the list of values present in the db"
         self._log("getting values")
@@ -629,6 +653,7 @@ class PersistDict(dict):
             yield self[k]
 
     @thread_safe
+    @no_lock_needed
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
         for k in self.keys():
