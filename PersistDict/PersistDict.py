@@ -97,7 +97,7 @@ class PersistDict(dict):
         value_unserializer: Optional[Callable] = pickle.loads,
         caching: bool = True,
         verbose: bool = False,
-        background_thread: bool = True,
+        background_thread: Union[bool, str] = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
         name: str = "",  # Name identifier for logging purposes
         minimal_locking: bool = True,  # Reduce locking for better performance
@@ -120,9 +120,11 @@ class PersistDict(dict):
             value_unserializer (Callable, default=pickle.loads): Function to deserialize values after retrieval. If None, no unserializer will be used, but this can lead to issues.
             caching (bool, default=True): If False, don't use LMDB's built in caching. Beware that you can't change the caching method if an instance is already declared to use the db.
             verbose (bool, default=False): If True, enables verbose logging.
-            background_thread (bool, default=True): If True, runs integrity check and expiration in a background thread.
-                If False, these operations run in the current thread during initialization. Set to False for better
-                determinism or in environments where threading is problematic.
+            background_thread (Union[bool, str], default=True): Controls integrity check and expiration behavior:
+                - If True: runs integrity check and expiration in a background thread.
+                - If False: runs integrity check and expiration in the current thread during initialization.
+                - If "disabled" (case-insensitive): skips integrity check and expiration entirely.
+                Set to False for better determinism or in environments where threading is problematic.
             name (str, default=""): Optional name identifier for the PersistDict instance. Used in logging messages
                 to identify which PersistDict instance is generating the logs when multiple instances exist.
             minimal_locking (bool, default=True): If True, reduces the use of locks for better performance.
@@ -137,7 +139,11 @@ class PersistDict(dict):
         self.database_path = Path(database_path)
         self.caching = caching
         self.key_size_limit = key_size_limit
-        self.background_thread = background_thread
+        # Handle the background_thread parameter
+        if isinstance(background_thread, str) and background_thread.lower() == "disabled":
+            self.background_thread = "disabled"
+        else:
+            self.background_thread = bool(background_thread)
         self.background_timeout = max(5, background_timeout)  # Ensure minimum timeout
         self.minimal_locking = minimal_locking
         
@@ -213,8 +219,10 @@ class PersistDict(dict):
         if "oldest_atime" not in self.info_db:
             self.info_db["oldest_atime"] = datetime.datetime.now()
 
-        # Run integrity check and expiration
-        if self.background_thread:
+        # Run integrity check and expiration if not disabled
+        if self.background_thread == "disabled":
+            self._log("Integrity check and expiration are disabled")
+        elif self.background_thread is True:
             # Start background thread for integrity check and expiration
             self._start_background_thread()
         else:
@@ -330,7 +338,12 @@ class PersistDict(dict):
         
         This method is thread-safe and handles the case where the current thread
         is the background thread to avoid deadlocks.
+        
+        Does nothing if background_thread is "disabled".
         """
+        # Do nothing if background_thread is "disabled"
+        if self.background_thread == "disabled":
+            return
         # Quick check if there's no thread to stop
         if not self._bg_thread:
             return
