@@ -460,6 +460,7 @@ class PersistDict(dict):
                         oldest_atime = current_atime
                         
                     if current_atime <= expiration_date:
+                        self._log(f"Key with atime {current_atime} is older than expiration date {expiration_date}, marking for deletion")
                         keys_to_delete.append(k)
                 except Exception as e:
                     # Handle any unexpected errors when checking keys
@@ -485,6 +486,7 @@ class PersistDict(dict):
                     break
                     
                 try:
+                    self._log(f"Deleting expired key {k}")
                     del self.val_db[k]
                     if k in self.metadata_db:
                         del self.metadata_db[k]

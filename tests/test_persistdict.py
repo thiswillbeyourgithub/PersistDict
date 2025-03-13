@@ -133,16 +133,18 @@ def test_expiration_and_serialization(clean_db):
     inst["test"] = "value"
     assert len(inst) == 1
     assert inst["test"] == "value"
-    assert inst.key_serializer(inst.hash_and_crop("test")) in inst.metadata_db
+    
+    key = inst.key_serializer(inst.hash_and_crop("test"))
+    assert key in inst.metadata_db
     
     # Test item not expired after 1 day
-    inst.metadata_db[inst.key_serializer(inst.hash_and_crop("test"))]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
+    inst.metadata_db[key]["atime"] = datetime.datetime.now() - datetime.timedelta(days=1)
     assert len(inst) == 1
     inst.__expire__()
     assert len(inst) == 1
     
     # Test item expired after 14 days
-    inst.metadata_db[inst.key_serializer(inst.hash_and_crop("test"))]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
+    inst.metadata_db[key]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
     assert len(inst) == 1
     inst.__expire__()
     assert len(inst) == 0
