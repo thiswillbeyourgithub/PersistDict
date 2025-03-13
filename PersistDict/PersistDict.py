@@ -60,53 +60,14 @@ def dummy_value_unserializer(inp):
 
 def thread_safe(method):
     """
-    Decorator to ensure thread safety for PersistDict methods.
+    Simple decorator to ensure thread safety for PersistDict methods.
     Acquires the lock before executing the method and releases it afterward.
-    If minimal_locking is enabled, this will only use locks for methods that
-    modify Python objects, not for operations that only interact with LMDB.
-    
-    Logs a warning if lock acquisition takes longer than a threshold, indicating contention.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        if self.minimal_locking and getattr(method, '_no_lock_needed', False):
+        with self._lock:
             return method(self, *args, **kwargs)
-        
-        # Try to acquire the lock with a timeout
-        lock_start_time = time.time()
-        lock_timeout = 0.5  # seconds - adjust as needed
-        
-        try:
-            lock_acquired = self._lock.acquire(timeout=lock_timeout)
-            
-            if not lock_acquired:
-                # Lock acquisition timed out - this indicates contention
-                wait_time = time.time() - lock_start_time
-                self._log(f"LOCK CONTENTION: Waited {wait_time:.3f}s for lock in {method.__name__}, still waiting...")
-                # Now wait indefinitely for the lock
-                self._lock.acquire()
-                total_wait = time.time() - lock_start_time
-                self._log(f"LOCK CONTENTION RESOLVED: Finally acquired lock after {total_wait:.3f}s in {method.__name__}")
-            
-            try:
-                return method(self, *args, **kwargs)
-            finally:
-                self._lock.release()
-        except Exception as e:
-            # Handle any exceptions during lock acquisition or method execution
-            self._log(f"Error in thread_safe decorator for {method.__name__}: {str(e)}")
-            # Re-raise the exception after logging
-            raise
     return wrapper
-
-def no_lock_needed(method):
-    """
-    Marker decorator to indicate methods that don't need locking
-    when minimal_locking is enabled because they only interact with
-    thread-safe LMDB operations.
-    """
-    method._no_lock_needed = True
-    return method
 
 @typechecker
 class PersistDict(dict):
@@ -126,7 +87,6 @@ class PersistDict(dict):
         background_thread: Union[bool, str] = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
         name: Optional[str] = None,  # Name identifier for logging purposes (defaults to database path name)
-        minimal_locking: bool = True,  # Reduce locking for better performance
         ) -> None:
         """
         Initialize a PersistDict instance.
@@ -153,10 +113,6 @@ class PersistDict(dict):
                 Set to False for better determinism or in environments where threading is problematic.
             name (str, default=""): Optional name identifier for the PersistDict instance. Used in logging messages
                 to identify which PersistDict instance is generating the logs when multiple instances exist.
-            minimal_locking (bool, default=True): If True, reduces the use of locks for better performance.
-                Since LMDB is already thread-safe, this only uses locks for operations that modify Python objects.
-                Enabled by default for better performance in multi-threaded environments. Set to False for
-                maximum thread safety if you're concerned about potential race conditions with Python-level operations.
         """
         self.verbose = verbose
         # Use database path name as default name if none provided
@@ -172,8 +128,6 @@ class PersistDict(dict):
         else:
             self.background_thread = bool(background_thread)
         self.background_timeout = max(5, background_timeout)  # Ensure minimum timeout
-        self.minimal_locking = minimal_locking
-        
         # Thread safety
         self._lock = threading.RLock()
         self._bg_thread = None
@@ -613,7 +567,6 @@ class PersistDict(dict):
         return self
 
     @thread_safe
-    @no_lock_needed
     def __getitem__(self, key: str) -> Any:
         self._log(f"getting item at key {key}")
         ks = self.key_serializer(self.hash_and_crop(key))
@@ -711,10 +664,12 @@ class PersistDict(dict):
         if len(self.val_db) == 1 or "oldest_atime" not in self.info_db:
             self.info_db["oldest_atime"] = t
 
-    @thread_safe
     def __delitem__(self, key: str) -> None:
         self._log(f"deleting item at key {key}")
+        lock_acquired = self._lock.acquire()
         try:
+            if not key in self:
+                return
             # Safely get the serialized key
             try:
                 ks = self.key_serializer(self.hash_and_crop(key))
@@ -810,6 +765,8 @@ class PersistDict(dict):
             # Otherwise, log the error and convert to KeyError
             self._log(f"Error in __delitem__ for key '{key}': {str(e)}")
             raise KeyError(key)
+        finally:
+            self._lock.release()
 
     @thread_safe
     def clear(self) -> None:
@@ -821,13 +778,11 @@ class PersistDict(dict):
         self.info_db["oldest_atime"] = datetime.datetime.now()
         
     @thread_safe
-    @no_lock_needed
     def __len__(self) -> int:
         self._log("getting length")
         return len(self.val_db)
 
     @thread_safe
-    @no_lock_needed
     def __contains__(self, key: str) -> bool:
         self._log(f"checking if val_db contains key {key}")
         try:
@@ -873,16 +828,13 @@ class PersistDict(dict):
             self._log(f"Error in __contains__ for key '{key}': {str(e)}")
             return False
         
-    @no_lock_needed
     def __repr__(self) -> str:
         return {k: v for k, v in self.items()}.__repr__()
 
-    @no_lock_needed
     def __str__(self) -> str:
         return {k: v for k, v in self.items()}.__str__()
 
     @thread_safe
-    @no_lock_needed
     def keys(self) -> Generator[str, None, None]:
         "get the list of keys present in the db, sorted by ctime"
         self._log("getting keys")
@@ -911,7 +863,6 @@ class PersistDict(dict):
             yield k
 
     @thread_safe
-    @no_lock_needed
     def values(self) -> Generator[Any, None, None]:
         "get the list of values present in the db"
         self._log("getting values")
@@ -919,13 +870,11 @@ class PersistDict(dict):
             yield self[k]
 
     @thread_safe
-    @no_lock_needed
     def items(self) -> Generator[Tuple[str, Any], None, None]:
         self._log("getting items")
         for k in self.keys():
             yield k, self[k]
 
-    @no_lock_needed
     def hash_and_crop(self, string):
         """Hash a string with SHA256 and crop to desired length (default 16 chars)"""
         return hashlib.sha256(string.encode('utf-8')).hexdigest()[:self.key_size_limit]
