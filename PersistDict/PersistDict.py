@@ -99,7 +99,7 @@ class PersistDict(dict):
         verbose: bool = False,
         background_thread: Union[bool, str] = True,
         background_timeout: int = 30,  # Maximum time in seconds for background operations
-        name: str = "",  # Name identifier for logging purposes
+        name: Optional[str] = None,  # Name identifier for logging purposes (defaults to database path name)
         minimal_locking: bool = True,  # Reduce locking for better performance
         ) -> None:
         """
@@ -133,7 +133,8 @@ class PersistDict(dict):
                 maximum thread safety if you're concerned about potential race conditions with Python-level operations.
         """
         self.verbose = verbose
-        self.name = name
+        # Use database path name as default name if none provided
+        self.name = name if name is not None else Path(database_path).name
         self._log(".__init__")
         self.expiration_days = expiration_days
         self.database_path = Path(database_path)
