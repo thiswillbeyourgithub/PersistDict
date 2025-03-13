@@ -554,12 +554,12 @@ class PersistDict(dict):
                 "getting items"
             ]
             
-            is_routine = any(message.startswith(op) for op in routine_operations)
+            is_routine = any(op in message for op in routine_operations)
             
             # Only log routine operations if PERSIST_DICT_TEST_LOG is True
             if PERSIST_DICT_TEST_LOG or not is_routine:
                 name_prefix = f"[{self.name}]" if self.name else ""
-                debug(f"PersistDict{name_prefix}:" + message)
+                debug(f"PersistDict{name_prefix}: {message}")
 
     @thread_safe
     def __call__(self, *args, **kwargs):
