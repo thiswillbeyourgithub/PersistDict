@@ -451,14 +451,25 @@ def test_logging_control(clean_db, monkeypatch):
     import sys
     from contextlib import redirect_stdout
     
-    # Capture stdout to check logging output
-    f = io.StringIO()
-    
+    # Capture both stdout and stderr to check logging output
+    stdout_f = io.StringIO()
+    stderr_f = io.StringIO()
+
     # Test with PERSIST_DICT_TEST_LOG=False (default)
     monkeypatch.setenv('PERSIST_DICT_TEST_LOG', 'false')
-    
+
     # Create a new instance to reload the environment variable
-    with redirect_stdout(f):
+    with redirect_stdout(stdout_f):
+        # Redirect stderr as well if using loguru
+        try:
+            from loguru import logger
+            import sys
+            # Store original stderr handler
+            original_handlers = logger.remove()
+            logger.add(stderr_f, level="DEBUG")
+        except ImportError:
+            pass
+            
         inst = PersistDict(
             database_path=clean_db,
             verbose=True
@@ -466,8 +477,19 @@ def test_logging_control(clean_db, monkeypatch):
         inst.clear()  # This is not routine and should be logged
         inst["key1"] = "value1"  # This is routine and should not be logged
         _ = inst["key1"]  # This is routine and should not be logged
-    
-    output = f.getvalue()
+        
+        # Restore original logger configuration if using loguru
+        try:
+            logger.remove()
+            for handler_id in original_handlers:
+                logger.add(sys.stderr, level="DEBUG")
+        except:
+            pass
+
+    # Check both stdout and stderr
+    stdout_output = stdout_f.getvalue()
+    stderr_output = stderr_f.getvalue()
+    output = stdout_output + stderr_output
     assert "Clearing database" in output, "Important operations should be logged"
     assert "setting item at key key1" not in output, "Routine operations should not be logged when PERSIST_DICT_TEST_LOG is false"
     

@@ -33,7 +33,7 @@ try:
     debug = logger.debug
 except ImportError:
     def debug(message: str) -> None:
-        print(message)
+        print(message, flush=True)
 
 def key_to_string(key):
     return base64.b64encode(zlib.compress(pickle.dumps(key), level=1)).decode('utf-8')
@@ -559,7 +559,13 @@ class PersistDict(dict):
             # Only log routine operations if PERSIST_DICT_TEST_LOG is True
             if PERSIST_DICT_TEST_LOG or not is_routine:
                 name_prefix = f"[{self.name}]" if self.name else ""
-                debug(f"PersistDict{name_prefix}: {message}")
+                log_message = f"PersistDict{name_prefix}: {message}"
+                
+                # When using print (fallback), ensure it goes to stdout
+                if 'logger' not in globals():
+                    print(log_message, flush=True)
+                else:
+                    debug(log_message)
 
     @thread_safe
     def __call__(self, *args, **kwargs):
