@@ -428,10 +428,9 @@ class PersistDict(dict):
                 
             expiration_date = datetime.datetime.now() - datetime.timedelta(days=self.expiration_days)
             
-            # Skip expiration check if oldest atime is newer than expiration date
-            if "oldest_atime" in self.info_db and self.info_db["oldest_atime"] > expiration_date:
-                self._log("Skipping expiration check - oldest atime is newer than expiration date")
-                return
+            # We'll always perform a full check to ensure we don't miss any expired items
+            # This is especially important when atime is manually modified (e.g., in tests)
+            self._log("Performing full expiration check")
 
             # Get keys to expire
             keys_to_delete = []

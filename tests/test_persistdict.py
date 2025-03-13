@@ -144,7 +144,10 @@ def test_expiration_and_serialization(clean_db):
     assert len(inst) == 1
     
     # Test item expired after 14 days
-    inst.metadata_db[key]["atime"] = datetime.datetime.now() - datetime.timedelta(days=14)
+    old_time = datetime.datetime.now() - datetime.timedelta(days=14)
+    inst.metadata_db[key]["atime"] = old_time
+    # Also update the oldest_atime in info_db to ensure consistency
+    inst.info_db["oldest_atime"] = old_time
     assert len(inst) == 1
     inst.__expire__()
     assert len(inst) == 0
