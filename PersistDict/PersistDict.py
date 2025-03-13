@@ -1,4 +1,3 @@
-import zlib
 import base64
 import hashlib
 import os
@@ -35,10 +34,10 @@ except ImportError:
         print(message, flush=True)
 
 def key_to_string(key):
-    return base64.b64encode(zlib.compress(pickle.dumps(key), level=1)).decode('utf-8')
+    return base64.b64encode(pickle.dumps(key)).decode('utf-8')
 
 def string_to_key(pickled_str):
-    return pickle.loads(zlib.decompress(base64.b64decode(pickled_str.encode('utf-8'))))
+    return pickle.loads(base64.b64decode(pickled_str.encode('utf-8')))
 
 def dummy_key_serializer(inp):
     if isinstance(inp, str):
