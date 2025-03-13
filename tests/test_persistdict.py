@@ -494,18 +494,40 @@ def test_logging_control(clean_db, monkeypatch):
     assert "setting item at key key1" not in output, "Routine operations should not be logged when PERSIST_DICT_TEST_LOG is false"
     
     # Test with PERSIST_DICT_TEST_LOG=True
-    f = io.StringIO()
+    stdout_f = io.StringIO()
+    stderr_f = io.StringIO()
     monkeypatch.setenv('PERSIST_DICT_TEST_LOG', 'true')
     
     # Create a new instance to reload the environment variable
-    with redirect_stdout(f):
+    with redirect_stdout(stdout_f):
+        # Redirect stderr as well if using loguru
+        try:
+            from loguru import logger
+            import sys
+            # Store original stderr handler
+            original_handlers = logger.remove()
+            logger.add(stderr_f, level="DEBUG")
+        except ImportError:
+            pass
+            
         inst = PersistDict(
             database_path=clean_db,
             verbose=True
         )
         inst["key2"] = "value2"  # This is routine but should be logged now
+        
+        # Restore original logger configuration if using loguru
+        try:
+            logger.remove()
+            for handler_id in original_handlers:
+                logger.add(sys.stderr, level="DEBUG")
+        except:
+            pass
     
-    output = f.getvalue()
+    # Check both stdout and stderr
+    stdout_output = stdout_f.getvalue()
+    stderr_output = stderr_f.getvalue()
+    output = stdout_output + stderr_output
     assert "setting item at key key2" in output, "Routine operations should be logged when PERSIST_DICT_TEST_LOG is true"
 
 

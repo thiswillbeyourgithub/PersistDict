@@ -556,7 +556,9 @@ class PersistDict(dict):
             is_routine = any(op in message for op in routine_operations)
             
             # Check environment variable dynamically each time
-            persist_dict_test_log = os.environ.get('PERSIST_DICT_TEST_LOG', '').lower() in ('true', '1', 'yes')
+            # Convert to lowercase and check for various truthy values
+            env_value = os.environ.get('PERSIST_DICT_TEST_LOG', '').lower()
+            persist_dict_test_log = env_value in ('true', '1', 'yes', 't', 'y')
             
             # Only log routine operations if PERSIST_DICT_TEST_LOG is True
             if persist_dict_test_log or not is_routine:
