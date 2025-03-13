@@ -384,7 +384,7 @@ def test_concurrent_operations(clean_db):
     inst.clear()
     
     # Number of operations per thread
-    num_ops = 300
+    num_ops = 1000
     # Number of threads
     num_threads = 8
     
