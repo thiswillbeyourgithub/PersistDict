@@ -71,7 +71,7 @@ def thread_safe(method):
 
 @typechecker
 class PersistDict(dict):
-    __VERSION__: str = "0.2.9"
+    __VERSION__: str = "0.2.10"
 
     def __init__(
         self,

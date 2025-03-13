@@ -6,7 +6,7 @@ with open("README.md", "r") as readme:
 
 setup(
     name="PersistDict",
-    version="0.2.9",
+    version="0.2.10",
     description="Looks like a dict and acts like a dict but is persistent via an LMDB db",
     long_description=long_description,
     long_description_content_type="text/markdown",
