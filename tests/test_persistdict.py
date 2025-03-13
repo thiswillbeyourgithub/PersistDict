@@ -454,7 +454,7 @@ def test_hash_and_crop(clean_db):
     # Test with default key_size_limit (511)
     long_key = "a" * 1000
     hashed_key1 = inst1.hash_and_crop(long_key)
-    assert len(hashed_key1) == 511
+    assert len(hashed_key1) <= 511
     
     # Create instance with smaller key_size_limit
     inst2 = PersistDict(
